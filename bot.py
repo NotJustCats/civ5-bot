@@ -729,6 +729,38 @@ async def stats(interaction: discord.Interaction):
     embed.add_field(name="Game Types",     value=size_text,          inline=False)
     await interaction.response.send_message(embed=embed)
 
+
+# ── /reset_elo ────────────────────────────────────────────────────────────────
+@bot.tree.command(name="reset_elo", description="Reset all Elo ratings to 1000 (admin only)")
+@app_commands.describe(password="Admin password")
+async def reset_elo(interaction: discord.Interaction, password: str):
+    # Always ephemeral so password and result are only visible to the caller
+    if password != "NotJustCats":
+        await interaction.response.send_message("❌ Incorrect password.", ephemeral=True)
+        return
+
+    all_data = load_all_data()
+    data = get_server_data(all_data, guild_id_from(interaction))
+    players = data.get("players", {})
+
+    if not players:
+        await interaction.response.send_message("No players to reset.", ephemeral=True)
+        return
+
+    count = len(players)
+    for uid in players:
+        players[uid]["elo"] = STARTING_ELO
+        players[uid]["wins"] = 0
+        players[uid]["losses"] = 0
+        players[uid]["civs"] = {}
+
+    save_all_data(all_data)
+
+    await interaction.response.send_message(
+        f"✅ Reset **{count} players** back to {STARTING_ELO} Elo. Match history preserved.",
+        ephemeral=True
+    )
+
 # ── /graph ────────────────────────────────────────────────────────────────────
 @bot.tree.command(name="graph", description="Show the Elo progression graph for all ranked players")
 async def graph(interaction: discord.Interaction):
@@ -770,3 +802,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
