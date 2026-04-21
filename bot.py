@@ -3,6 +3,9 @@ from discord.ext import commands
 from discord import app_commands
 import json
 import os
+import tempfile
+import asyncio
+from aiohttp import web
 from datetime import datetime
 from typing import Optional
 
@@ -13,6 +16,7 @@ STARTING_ELO = 1000
 K_FACTOR = 32
 MAX_LOBBY_SIZE = 8
 FLOOR_ELO = 100
+PUBLIC_URL = os.getenv("PUBLIC_URL", "").rstrip("/")  # set this in Railway variables
 
 # All Civ 5 civs (BNW + Gods & Kings + Lek mod)
 ALL_CIVS = sorted([
@@ -37,14 +41,31 @@ ALL_CIVS = sorted([
 
 # ── Data helpers ─────────────────────────────────────────────────────────────
 def load_data() -> dict:
-    if os.path.exists(DATA_FILE):
+    """Load data from disk. Returns fresh state if file is missing or corrupted."""
+    default = {"players": {}, "lobbies": {}, "active_games": {}, "game_groups": {}, "matches": []}
+    if not os.path.exists(DATA_FILE):
+        return default
+    try:
         with open(DATA_FILE, "r") as f:
-            return json.load(f)
-    return {"players": {}, "lobbies": {}, "active_games": {}, "matches": []}
+            data = json.load(f)
+        # Ensure all top-level keys exist (handles old saves missing new keys)
+        for key, val in default.items():
+            data.setdefault(key, val)
+        return data
+    except (json.JSONDecodeError, IOError):
+        print("⚠️  WARNING: ranked_data.json is corrupted or unreadable. Starting fresh.")
+        return default
 
 def save_data(data: dict):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+    """Atomic save — writes to a temp file first, then replaces, so a crash never corrupts data."""
+    dir_name = os.path.dirname(os.path.abspath(DATA_FILE))
+    try:
+        with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False, suffix=".tmp") as tmp:
+            json.dump(data, tmp, indent=2)
+            tmp_path = tmp.name
+        os.replace(tmp_path, DATA_FILE)
+    except IOError as e:
+        print(f"❌ Failed to save data: {e}")
 
 def get_player(data: dict, user_id: str) -> dict:
     if user_id not in data["players"]:
@@ -55,6 +76,17 @@ def get_player(data: dict, user_id: str) -> dict:
             "civs": {}
         }
     return data["players"][user_id]
+
+def player_in_active_game(data: dict, user_id: str) -> bool:
+    """Check if a player is currently in a started game."""
+    return user_id in data.get("active_games", {})
+
+def player_in_any_lobby(data: dict, user_id: str) -> bool:
+    """Check if a player is in any open lobby."""
+    for lobby in data.get("lobbies", {}).values():
+        if user_id in lobby["players"]:
+            return True
+    return False
 
 def calc_multiplayer_elo(players: list) -> list:
     """
@@ -72,7 +104,6 @@ def calc_multiplayer_elo(players: list) -> list:
             expected_i = 1 / (1 + 10 ** ((players[j]["elo"] - players[i]["elo"]) / 400))
             k = K_FACTOR / (n - 1)
             raw_delta = k * ((1 if i_beat_j else 0) - expected_i)
-            # Skip: floored player can't give Elo they don't have
             if i_beat_j and players[j]["elo"] <= FLOOR_ELO:
                 continue
             deltas[i] += raw_delta
@@ -93,6 +124,224 @@ def build_lobby_embed(lobby: dict) -> discord.Embed:
     embed.set_footer(text="Use /join_lobby @host [civ] to join • Host uses /start_game to begin")
     return embed
 
+
+# ── Web server (serves the Elo graph page) ───────────────────────────────────
+def build_graph_html() -> str:
+    """Read current match data and bake it into a self-contained HTML page."""
+    data = load_data()
+    matches = data.get("matches", [])
+    players = data.get("players", {})
+
+    # Only include players who have played at least one game
+    active_ids = set()
+    for m in matches:
+        for p in m.get("players", []):
+            active_ids.add(p["id"])
+
+    # Build timeline: start at 1000, then step through each match
+    timeline = []
+    current_elo = {pid: 1000 for pid in active_ids}
+
+    timeline.append({
+        "label": "Start",
+        **{pid: 1000 for pid in active_ids}
+    })
+
+    sorted_matches = sorted(matches, key=lambda m: m.get("played_at", ""))
+    for i, match in enumerate(sorted_matches):
+        for p in match.get("players", []):
+            if p["id"] in active_ids:
+                current_elo[p["id"]] = p["elo_after"]
+        date_str = match.get("played_at", "")[:10]
+        timeline.append({
+            "label": f"G{i+1} ({date_str})",
+            **{pid: current_elo[pid] for pid in active_ids}
+        })
+
+    # Build player name map — use Discord IDs as fallback
+    player_list = [
+        {"id": pid, "name": f"Player {i+1}", "finalElo": players.get(pid, {}).get("elo", 1000)}
+        for i, pid in enumerate(sorted(active_ids, key=lambda x: players.get(x, {}).get("elo", 0), reverse=True))
+    ]
+
+    import json as _json
+    timeline_json = _json.dumps(timeline)
+    players_json = _json.dumps(player_list)
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Civ 5 Ranked — Elo Graph</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{ background: #080a0f; color: #e2e8f0; font-family: 'IBM Plex Mono', monospace; min-height: 100vh; padding: 24px; }}
+  h1 {{ font-family: 'Cinzel', serif; font-size: 24px; color: #f97316; letter-spacing: 3px; text-shadow: 0 0 30px rgba(249,115,22,0.4); margin-bottom: 4px; }}
+  .subtitle {{ color: #475569; font-size: 11px; letter-spacing: 2px; margin-bottom: 24px; }}
+  .card {{ background: #0d1017; border: 1px solid #1e2130; border-radius: 12px; padding: 20px; margin-bottom: 20px; }}
+  .player-grid {{ display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }}
+  .player-btn {{ border-radius: 8px; padding: 8px 14px; cursor: pointer; border-width: 1px; border-style: solid; background: transparent; font-family: 'IBM Plex Mono', monospace; transition: opacity 0.15s; text-align: left; }}
+  .player-btn.hidden {{ opacity: 0.3; }}
+  .player-name {{ font-weight: 600; font-size: 13px; }}
+  .player-elo {{ font-size: 11px; color: #64748b; margin-top: 2px; }}
+  .rank-toggle {{ display: flex; align-items: center; gap: 8px; color: #475569; font-size: 11px; cursor: pointer; margin-bottom: 16px; }}
+  canvas {{ width: 100% !important; }}
+  .footer {{ text-align: center; color: #1e2130; font-size: 10px; letter-spacing: 3px; margin-top: 16px; }}
+</style>
+</head>
+<body>
+<h1>⚔️ CIV 5 ELO TRACKER</h1>
+<p class="subtitle">RANKED LADDER · LIVE DATA</p>
+
+<div class="player-grid" id="playerGrid"></div>
+
+<label class="rank-toggle">
+  <input type="checkbox" id="rankToggle" checked onchange="toggleRanks()"> SHOW RANK LINES
+</label>
+
+<div class="card">
+  <canvas id="eloChart"></canvas>
+</div>
+
+<p class="footer">CIV 5 RANKED · CLICK PLAYERS TO TOGGLE · AUTO-UPDATES ON REFRESH</p>
+
+<script>
+const TIMELINE = {timeline_json};
+const PLAYERS = {players_json};
+const PALETTE = ["#f97316","#3b82f6","#a855f7","#22c55e","#ef4444","#eab308","#06b6d4","#ec4899"];
+const RANKS = [
+  {{y:1800, label:"Deity",    color:"rgba(255,215,0,0.2)"}},
+  {{y:1600, label:"Emperor",  color:"rgba(192,132,252,0.2)"}},
+  {{y:1400, label:"King",     color:"rgba(96,165,250,0.2)"}},
+  {{y:1200, label:"Prince",   color:"rgba(74,222,128,0.2)"}},
+  {{y:1000, label:"Chieftain",color:"rgba(148,163,184,0.15)"}},
+];
+
+function rankLabel(elo) {{
+  if (elo>=1800) return "🏆 Deity";
+  if (elo>=1600) return "⚔️ Emperor";
+  if (elo>=1400) return "🛡️ King";
+  if (elo>=1200) return "⚙️ Prince";
+  if (elo>=1000) return "🌿 Chieftain";
+  return "🪨 Settler";
+}}
+
+const hidden = new Set();
+const labels = TIMELINE.map(t => t.label);
+
+const datasets = PLAYERS.map((p, i) => ({{
+  label: p.name,
+  data: TIMELINE.map(t => t[p.id] ?? null),
+  borderColor: PALETTE[i % PALETTE.length],
+  backgroundColor: PALETTE[i % PALETTE.length],
+  borderWidth: 2.5,
+  pointRadius: 4,
+  pointHoverRadius: 7,
+  tension: 0.3,
+}}));
+
+const rankAnnotations = {{}};
+RANKS.forEach((r, i) => {{
+  rankAnnotations[`rank${{i}}`] = {{
+    type: "line", yMin: r.y, yMax: r.y,
+    borderColor: r.color, borderWidth: 1, borderDash: [5,5],
+    label: {{ content: r.label, display: true, color: r.color, font: {{size:9, family:"IBM Plex Mono"}}, position:"end" }}
+  }};
+}});
+
+const ctx = document.getElementById("eloChart").getContext("2d");
+const chart = new Chart(ctx, {{
+  type: "line",
+  data: {{ labels, datasets }},
+  options: {{
+    responsive: true,
+    interaction: {{ mode: "index", intersect: false }},
+    plugins: {{
+      legend: {{ display: false }},
+      tooltip: {{
+        backgroundColor: "#0f1117",
+        borderColor: "#2a2d3a",
+        borderWidth: 1,
+        titleColor: "#64748b",
+        bodyColor: "#e2e8f0",
+        titleFont: {{family:"IBM Plex Mono", size:11}},
+        bodyFont: {{family:"IBM Plex Mono", size:12}},
+        callbacks: {{
+          label: ctx => ` ${{ctx.dataset.label}}: ${{ctx.parsed.y}} Elo (${{rankLabel(ctx.parsed.y)}})`
+        }}
+      }}
+    }},
+    scales: {{
+      x: {{ ticks: {{ color:"#475569", font:{{family:"IBM Plex Mono",size:10}} }}, grid: {{ color:"#1a1f2e" }} }},
+      y: {{ ticks: {{ color:"#475569", font:{{family:"IBM Plex Mono",size:10}} }}, grid: {{ color:"#1a1f2e" }}, min: 800 }}
+    }}
+  }}
+}});
+
+// Render player buttons
+const grid = document.getElementById("playerGrid");
+PLAYERS.forEach((p, i) => {{
+  const color = PALETTE[i % PALETTE.length];
+  const medals = ["🥇","🥈","🥉"];
+  const btn = document.createElement("button");
+  btn.className = "player-btn";
+  btn.style.borderColor = color;
+  btn.style.color = color;
+  btn.innerHTML = `<div class="player-name">${{medals[i]||"#"+(i+1)}} ${{p.name}}</div><div class="player-elo">${{p.finalElo}} Elo · ${{rankLabel(p.finalElo)}}</div>`;
+  btn.onclick = () => {{
+    const ds = chart.data.datasets[i];
+    if (hidden.has(p.id)) {{
+      hidden.delete(p.id);
+      ds.borderWidth = 2.5;
+      ds.pointRadius = 4;
+      btn.classList.remove("hidden");
+    }} else {{
+      hidden.add(p.id);
+      ds.borderWidth = 0;
+      ds.pointRadius = 0;
+      btn.classList.add("hidden");
+    }}
+    chart.update();
+  }};
+  grid.appendChild(btn);
+}});
+
+function toggleRanks() {{
+  const show = document.getElementById("rankToggle").checked;
+  RANKS.forEach((r, i) => {{
+    const ds = chart.data.datasets;
+    // toggle via y-axis min trick
+  }});
+  // Simple approach: add/remove rank reference lines by rebuilding
+  chart.options.scales.y.min = show ? 800 : undefined;
+  chart.update();
+}}
+</script>
+</body>
+</html>"""
+
+async def handle_graph(request):
+    html = build_graph_html()
+    return web.Response(text=html, content_type="text/html")
+
+async def handle_data(request):
+    data = load_data()
+    return web.Response(text=json.dumps(data), content_type="application/json")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/graph", handle_graph)
+    app.router.add_get("/data", handle_data)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"🌐  Web server running on port {port}")
+
 # ── Bot setup ────────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
 intents.message_content = True
@@ -112,19 +361,17 @@ async def open_lobby(interaction: discord.Interaction, civ: str):
         return
 
     data = load_data()
-    if "lobbies" not in data:
-        data["lobbies"] = {}
-
     host_id = str(interaction.user.id)
 
     if host_id in data["lobbies"]:
         await interaction.response.send_message("⚠️ You already have an open lobby! Use `/cancel_game` to close it first.", ephemeral=True)
         return
-
-    for lid, lobby in data["lobbies"].items():
-        if host_id in lobby["players"]:
-            await interaction.response.send_message("⚠️ You're already in an open lobby. Use `/leave_lobby` first.", ephemeral=True)
-            return
+    if player_in_any_lobby(data, host_id):
+        await interaction.response.send_message("⚠️ You're already in an open lobby. Use `/leave_lobby` first.", ephemeral=True)
+        return
+    if player_in_active_game(data, host_id):
+        await interaction.response.send_message("⚠️ You're already in an active game. Use `/cancel_game` to cancel it first.", ephemeral=True)
+        return
 
     data["lobbies"][host_id] = {
         "host": host_id,
@@ -148,9 +395,6 @@ async def join_lobby(interaction: discord.Interaction, host: discord.Member, civ
         return
 
     data = load_data()
-    if "lobbies" not in data:
-        data["lobbies"] = {}
-
     host_id = str(host.id)
     joiner_id = str(interaction.user.id)
 
@@ -163,16 +407,15 @@ async def join_lobby(interaction: discord.Interaction, host: discord.Member, civ
     if joiner_id in lobby["players"]:
         await interaction.response.send_message("⚠️ You're already in this lobby!", ephemeral=True)
         return
-
-    for lid, l in data["lobbies"].items():
-        if joiner_id in l["players"] and lid != host_id:
-            await interaction.response.send_message("⚠️ You're already in another lobby. Use `/leave_lobby` first.", ephemeral=True)
-            return
-
+    if player_in_any_lobby(data, joiner_id):
+        await interaction.response.send_message("⚠️ You're already in another lobby. Use `/leave_lobby` first.", ephemeral=True)
+        return
+    if player_in_active_game(data, joiner_id):
+        await interaction.response.send_message("⚠️ You're already in an active game. Use `/cancel_game` to cancel it first.", ephemeral=True)
+        return
     if len(lobby["players"]) >= MAX_LOBBY_SIZE:
         await interaction.response.send_message(f"❌ Lobby is full ({MAX_LOBBY_SIZE} players max).", ephemeral=True)
         return
-
     if civ in lobby["player_civs"]:
         await interaction.response.send_message(f"❌ **{civ}** is already taken. Pick a different civ!", ephemeral=True)
         return
@@ -189,9 +432,6 @@ async def join_lobby(interaction: discord.Interaction, host: discord.Member, civ
 @bot.tree.command(name="leave_lobby", description="Leave a lobby you have joined")
 async def leave_lobby(interaction: discord.Interaction):
     data = load_data()
-    if "lobbies" not in data:
-        data["lobbies"] = {}
-
     leaver_id = str(interaction.user.id)
     found_lobby_id = None
 
@@ -206,6 +446,7 @@ async def leave_lobby(interaction: discord.Interaction):
 
     lobby = data["lobbies"][found_lobby_id]
 
+    # If host leaves, close the whole lobby
     if leaver_id == found_lobby_id:
         del data["lobbies"][found_lobby_id]
         save_data(data)
@@ -231,9 +472,6 @@ async def leave_lobby(interaction: discord.Interaction):
 @bot.tree.command(name="start_game", description="Start your lobby — locks it in and begins the ranked game")
 async def start_game(interaction: discord.Interaction):
     data = load_data()
-    if "lobbies" not in data:
-        data["lobbies"] = {}
-
     host_id = str(interaction.user.id)
 
     if host_id not in data["lobbies"]:
@@ -246,11 +484,15 @@ async def start_game(interaction: discord.Interaction):
         await interaction.response.send_message("❌ You need at least 2 players to start.", ephemeral=True)
         return
 
-    # Save civ map so /report_results can record civ stats
-    if "active_games" not in data:
-        data["active_games"] = {}
+    # Save civ map and game group so /report_results can look them up
+    game_id = host_id
     for pid, civ in zip(lobby["players"], lobby["player_civs"]):
-        data["active_games"][pid] = civ
+        data["active_games"][pid] = {"civ": civ, "game_id": game_id}
+    data["game_groups"][game_id] = {
+        "players": lobby["players"],
+        "player_names": lobby["player_names"],
+        "player_civs": lobby["player_civs"],
+    }
 
     player_lines = "\n".join(
         f"• <@{pid}> — **{civ}**"
@@ -263,7 +505,7 @@ async def start_game(interaction: discord.Interaction):
     embed = discord.Embed(
         title=f"⚔️  {len(lobby['players'])}-Player Ranked Game Started!",
         description=f"{player_lines}\n\n"
-                    f"When the game ends, report finishing order with:\n"
+                    f"When the game ends, the host reports finishing order with:\n"
                     f"`/report_results @1st @2nd @3rd ...`",
         color=0xD4A017
     )
@@ -271,14 +513,12 @@ async def start_game(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 # ── /cancel_game ─────────────────────────────────────────────────────────────
-@bot.tree.command(name="cancel_game", description="Cancel your open lobby — no Elo changes")
+@bot.tree.command(name="cancel_game", description="Cancel your open lobby or active game — no Elo changes")
 async def cancel_game(interaction: discord.Interaction):
     data = load_data()
-    if "lobbies" not in data:
-        data["lobbies"] = {}
-
     caller_id = str(interaction.user.id)
 
+    # Case 1: They have an open lobby (as host)
     if caller_id in data["lobbies"]:
         lobby = data["lobbies"][caller_id]
         player_names = lobby["player_names"]
@@ -294,6 +534,27 @@ async def cancel_game(interaction: discord.Interaction):
         await interaction.response.send_message(embed=embed)
         return
 
+    # Case 2: They're in a started game
+    if caller_id in data["active_games"]:
+        game_entry = data["active_games"][caller_id]
+        game_id = game_entry.get("game_id") if isinstance(game_entry, dict) else None
+        if game_id and game_id in data["game_groups"]:
+            group = data["game_groups"][game_id]
+            for pid in group["players"]:
+                data["active_games"].pop(pid, None)
+            del data["game_groups"][game_id]
+            save_data(data)
+            names_str = ", ".join(group["player_names"])
+            embed = discord.Embed(
+                title="🚫  Game Cancelled",
+                description=f"{interaction.user.mention} cancelled the in-progress game.\n"
+                            f"Players: {names_str}\n\nNo Elo changes have been made.",
+                color=0x888888
+            )
+            await interaction.response.send_message(embed=embed)
+            return
+
+    # Case 3: They're in someone else's lobby (non-host)
     for lid, lobby in data["lobbies"].items():
         if caller_id in lobby["players"]:
             await interaction.response.send_message(
@@ -301,12 +562,12 @@ async def cancel_game(interaction: discord.Interaction):
                 ephemeral=True)
             return
 
-    await interaction.response.send_message("❌ You don't have an open lobby to cancel.", ephemeral=True)
+    await interaction.response.send_message("❌ You're not in any active lobby or game to cancel.", ephemeral=True)
 
 # ── /report_results ───────────────────────────────────────────────────────────
 @bot.tree.command(
     name="report_results",
-    description="Report finishing positions for a ranked game (2 to 8 players in order)"
+    description="Report finishing positions for a ranked game (host only)"
 )
 @app_commands.describe(
     first="Player who finished 1st",
@@ -342,21 +603,49 @@ async def report_results(
 
     data = load_data()
     active_games = data.get("active_games", {})
+    game_groups = data.get("game_groups", {})
+    caller_id = str(interaction.user.id)
+
+    # Must be the host of an active game
+    caller_entry = active_games.get(caller_id)
+    if not caller_entry:
+        await interaction.response.send_message("❌ You don't have an active game to report.", ephemeral=True)
+        return
+    game_id = caller_entry.get("game_id") if isinstance(caller_entry, dict) else None
+    if game_id != caller_id:
+        await interaction.response.send_message("❌ Only the host can report results.", ephemeral=True)
+        return
+
+    # Verify reported players match the actual game group
+    group = game_groups.get(game_id, {})
+    expected_ids = set(group.get("players", []))
+    reported_ids = set(str(m.id) for m in members)
+    if expected_ids != reported_ids:
+        missing = expected_ids - reported_ids
+        extra = reported_ids - expected_ids
+        msg = "❌ Reported players don't match the game lobby.\n"
+        if missing:
+            msg += f"Missing: {', '.join(f'<@{p}>' for p in missing)}\n"
+        if extra:
+            msg += f"Not in game: {', '.join(f'<@{p}>' for p in extra)}"
+        await interaction.response.send_message(msg, ephemeral=True)
+        return
 
     player_info = []
     for i, member in enumerate(members):
         p = get_player(data, str(member.id))
+        entry = active_games.get(str(member.id), {})
+        civ = entry.get("civ") if isinstance(entry, dict) else entry
         player_info.append({
             "id": str(member.id),
             "member": member,
             "finish": i + 1,
             "elo": p["elo"],
             "old_elo": p["elo"],
-            "civ": active_games.get(str(member.id))
+            "civ": civ
         })
 
     new_elos = calc_multiplayer_elo(player_info)
-
     medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
     result_lines = []
 
@@ -368,23 +657,19 @@ async def report_results(
         sign = "+" if diff >= 0 else ""
         p["elo"] = new_elo
 
-        # Record win/loss
         if i == 0:
             p["wins"] += 1
         else:
             p["losses"] += 1
 
-        # Record civ stats if civ is known
         civ = info["civ"]
         if civ:
-            if civ not in p["civs"]:
-                p["civs"][civ] = {"wins": 0, "losses": 0}
+            p["civs"].setdefault(civ, {"wins": 0, "losses": 0})
             if i == 0:
                 p["civs"][civ]["wins"] += 1
             else:
                 p["civs"][civ]["losses"] += 1
 
-        # Clean up active game entry
         active_games.pop(info["id"], None)
 
         civ_tag = f" ({civ})" if civ else ""
@@ -393,7 +678,10 @@ async def report_results(
             f"{old_elo} → **{new_elo}** ({sign}{diff})  {rank_label(new_elo)}"
         )
 
+    # Clean up game group
+    game_groups.pop(game_id, None)
     data["active_games"] = active_games
+    data["game_groups"] = game_groups
     data["matches"].append({
         "type": f"{len(members)}-player",
         "players": [
@@ -439,7 +727,9 @@ async def leaderboard(interaction: discord.Interaction):
         try:
             user = await bot.fetch_user(int(uid))
             name = user.display_name
-        except:
+        except discord.NotFound:
+            name = f"<@{uid}>"
+        except discord.HTTPException:
             name = f"<@{uid}>"
         w, l = stats["wins"], stats["losses"]
         winrate = round(w / (w + l) * 100) if (w + l) > 0 else 0
@@ -470,9 +760,8 @@ async def profile(interaction: discord.Interaction, player: Optional[discord.Mem
 
     civs = stats.get("civs", {})
     if civs:
-        # Sort by win rate (min 1 game), show top 5
         def civ_score(item):
-            c, v = item
+            v = item[1]
             games = v["wins"] + v["losses"]
             return v["wins"] / games if games > 0 else 0
 
@@ -518,8 +807,45 @@ async def stats(interaction: discord.Interaction):
     embed.add_field(name="Game Types",     value=size_text,          inline=False)
     await interaction.response.send_message(embed=embed)
 
+
+# ── /graph ────────────────────────────────────────────────────────────────────
+@bot.tree.command(name="graph", description="Show the Elo progression graph for all ranked players")
+async def graph(interaction: discord.Interaction):
+    data = load_data()
+    active_ids = set()
+    for m in data.get("matches", []):
+        for p in m.get("players", []):
+            active_ids.add(p["id"])
+
+    if not active_ids:
+        await interaction.response.send_message("No matches played yet — nothing to graph!", ephemeral=True)
+        return
+
+    if not PUBLIC_URL:
+        await interaction.response.send_message(
+            "⚠️ `PUBLIC_URL` is not set in Railway environment variables. "
+            "Add it in the Variables tab (e.g. `https://your-app.up.railway.app`) then redeploy.",
+            ephemeral=True
+        )
+        return
+
+    url = f"{PUBLIC_URL}/graph"
+    count = len(active_ids)
+    embed = discord.Embed(
+        title="📈  Civ 5 Elo Graph",
+        description=f"Live Elo progression for all **{count} ranked players**.\n\n[**Open Graph →**]({url})",
+        color=0xf97316,
+        url=url
+    )
+    embed.set_footer(text="Updates automatically on each page refresh")
+    await interaction.response.send_message(embed=embed)
+
 # ── Run ───────────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
+async def main():
     if not TOKEN:
         raise RuntimeError("Set the DISCORD_TOKEN environment variable!")
-    bot.run(TOKEN)
+    await start_web_server()
+    await bot.start(TOKEN)
+
+if __name__ == "__main__":
+    asyncio.run(main())
