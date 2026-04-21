@@ -3,19 +3,17 @@ from discord.ext import commands
 from discord import app_commands
 import json
 import os
-import math
 from datetime import datetime
 from typing import Optional
 
 # ── Config ──────────────────────────────────────────────────────────────────
-TOKEN = os.getenv("DISCORD_TOKEN")          # set in your environment
+TOKEN = os.getenv("DISCORD_TOKEN")
 DATA_FILE = "ranked_data.json"
 STARTING_ELO = 1000
-K_FACTOR = 32                               # how much Elo shifts per game
+K_FACTOR = 32
 
 # All Civ 5 civs (BNW + Gods & Kings + Lek mod)
 ALL_CIVS = sorted([
-    # Base game + DLC
     "America", "Arabia", "Assyria", "Austria", "Aztec", "Babylon", "Brazil",
     "Byzantium", "Carthage", "Celts", "China", "Denmark", "Egypt", "England",
     "Ethiopia", "France", "Germany", "Greece", "Huns", "Inca", "India",
@@ -23,7 +21,6 @@ ALL_CIVS = sorted([
     "Morocco", "Netherlands", "Ottomans", "Persia", "Poland", "Polynesia",
     "Portugal", "Rome", "Russia", "Shoshone", "Siam", "Songhai", "Spain",
     "Sweden", "Venice", "Zulu",
-    # Lek mod civs
     "Akkad", "Aksum", "Argentina", "Armenia", "Australia", "Ayyubids",
     "Belgium", "Boers", "Bolivia", "Brunei", "Bulgaria", "Burma", "Canada",
     "Chile", "Colombia", "Cuba", "Finland", "Franks", "Gaul", "Georgia",
@@ -53,17 +50,27 @@ def get_player(data: dict, user_id: str) -> dict:
             "elo": STARTING_ELO,
             "wins": 0,
             "losses": 0,
-            "civs": {}           # civ_name -> {"wins": n, "losses": n}
+            "civs": {}
         }
     return data["players"][user_id]
 
-def calc_elo(winner_elo: int, loser_elo: int) -> tuple[int, int]:
-    """Returns (new_winner_elo, new_loser_elo)."""
-    expected_w = 1 / (1 + 10 ** ((loser_elo - winner_elo) / 400))
-    expected_l = 1 - expected_w
-    new_winner = round(winner_elo + K_FACTOR * (1 - expected_w))
-    new_loser  = round(loser_elo  + K_FACTOR * (0 - expected_l))
-    return new_winner, new_loser
+def calc_multiplayer_elo(players: list) -> list:
+    """
+    Elo for 2-8 players based on finishing position.
+    Every player is compared against every other player pairwise.
+    K factor scales down in larger games so total swing stays fair.
+    """
+    n = len(players)
+    deltas = [0.0] * n
+    for i in range(n):
+        for j in range(n):
+            if i == j:
+                continue
+            score = 1 if players[i]["finish"] < players[j]["finish"] else 0
+            expected = 1 / (1 + 10 ** ((players[j]["elo"] - players[i]["elo"]) / 400))
+            k = K_FACTOR / (n - 1)
+            deltas[i] += k * (score - expected)
+    return [max(round(players[i]["elo"] + deltas[i]), 100) for i in range(n)]
 
 def rank_label(elo: int) -> str:
     if elo >= 1800: return "🏆 Deity"
@@ -130,97 +137,166 @@ async def accept(interaction: discord.Interaction, challenger: discord.Member):
     embed = discord.Embed(
         title="✅  Challenge Accepted!",
         description=f"{interaction.user.mention} has accepted {challenger.mention}'s challenge!\n\n"
-                    "🎮 **Go play your game!** When done, the winner reports with:\n"
-                    f"`/report_win @loser [your_civ] [their_civ]`",
+                    "🎮 **Go play your game!** When done, report results with:\n"
+                    "`/report_results @1st @2nd` (add more players for multiplayer)",
         color=0x4CAF50
     )
     await interaction.response.send_message(embed=embed)
 
-# ── /report_win ───────────────────────────────────────────────────────────────
-@bot.tree.command(name="report_win", description="Report that you won a ranked match")
+# ── /cancel_game ─────────────────────────────────────────────────────────────
+@bot.tree.command(name="cancel_game", description="Cancel an unfinished game — no Elo changes")
 @app_commands.describe(
-    loser="The player you beat",
-    your_civ="The civ you played (optional)",
-    their_civ="The civ they played (optional)"
+    player2="Another player in the game",
+    player3="(optional)",
+    player4="(optional)",
+    player5="(optional)",
+    player6="(optional)",
+    player7="(optional)",
+    player8="(optional)",
 )
-async def report_win(
+async def cancel_game(
     interaction: discord.Interaction,
-    loser: discord.Member,
-    your_civ: Optional[str] = None,
-    their_civ: Optional[str] = None
+    player2: discord.Member,
+    player3: Optional[discord.Member] = None,
+    player4: Optional[discord.Member] = None,
+    player5: Optional[discord.Member] = None,
+    player6: Optional[discord.Member] = None,
+    player7: Optional[discord.Member] = None,
+    player8: Optional[discord.Member] = None,
 ):
-    if loser.bot or loser.id == interaction.user.id:
-        await interaction.response.send_message("❌ Invalid opponent.", ephemeral=True)
-        return
+    raw = [interaction.user, player2, player3, player4, player5, player6, player7, player8]
+    members = [m for m in raw if m is not None]
+    caller_id = interaction.user.id
 
-    # Validate civs
-    if your_civ and your_civ not in ALL_CIVS:
-        await interaction.response.send_message(
-            f"❌ Unknown civ `{your_civ}`. Check `/civs` for the full list.", ephemeral=True)
-        return
-    if their_civ and their_civ not in ALL_CIVS:
-        await interaction.response.send_message(
-            f"❌ Unknown civ `{their_civ}`. Check `/civs` for the full list.", ephemeral=True)
+    # Make sure the caller is actually one of the players (always true since
+    # interaction.user is always included, but good to be explicit)
+    member_ids = [m.id for m in members]
+    if caller_id not in member_ids:
+        await interaction.response.send_message("❌ You can only cancel games you're part of.", ephemeral=True)
         return
 
     data = load_data()
-    winner_id = str(interaction.user.id)
-    loser_id  = str(loser.id)
 
-    w = get_player(data, winner_id)
-    l = get_player(data, loser_id)
+    # Look for any open challenge involving these players and remove it
+    keys_to_delete = []
+    for key in data.get("challenges", {}):
+        parts = key.split("-")
+        if len(parts) == 2:
+            a, b = int(parts[0]), int(parts[1])
+            if a in member_ids and b in member_ids:
+                keys_to_delete.append(key)
 
-    old_w_elo = w["elo"]
-    old_l_elo = l["elo"]
-    new_w_elo, new_l_elo = calc_elo(old_w_elo, old_l_elo)
+    for key in keys_to_delete:
+        del data["challenges"][key]
 
-    w["elo"]   = new_w_elo
-    w["wins"] += 1
-    l["elo"]    = max(new_l_elo, 100)   # floor at 100
-    l["losses"] += 1
+    if keys_to_delete:
+        save_data(data)
 
-    # Track civ stats
-    if your_civ:
-        w["civs"].setdefault(your_civ, {"wins": 0, "losses": 0})["wins"] += 1
-    if their_civ:
-        l["civs"].setdefault(their_civ, {"wins": 0, "losses": 0})["losses"] += 1
+    # Build mention list for the embed (everyone except the caller)
+    others = [m.mention for m in members if m.id != caller_id]
+    others_str = ", ".join(others) if others else "the other players"
 
-    # Log match
+    embed = discord.Embed(
+        title="🚫  Game Cancelled",
+        description=f"{interaction.user.mention} has cancelled the game with {others_str}.\n\n"
+                    "No Elo changes have been made.",
+        color=0x888888
+    )
+    await interaction.response.send_message(embed=embed)
+
+# ── /report_results ───────────────────────────────────────────────────────────
+@bot.tree.command(
+    name="report_results",
+    description="Report finishing positions for a ranked game (1v1 up to 8 players)"
+)
+@app_commands.describe(
+    first="Player who finished 1st",
+    second="Player who finished 2nd",
+    third="Player who finished 3rd (optional)",
+    fourth="Player who finished 4th (optional)",
+    fifth="Player who finished 5th (optional)",
+    sixth="Player who finished 6th (optional)",
+    seventh="Player who finished 7th (optional)",
+    eighth="Player who finished 8th (optional)",
+)
+async def report_results(
+    interaction: discord.Interaction,
+    first: discord.Member,
+    second: discord.Member,
+    third: Optional[discord.Member] = None,
+    fourth: Optional[discord.Member] = None,
+    fifth: Optional[discord.Member] = None,
+    sixth: Optional[discord.Member] = None,
+    seventh: Optional[discord.Member] = None,
+    eighth: Optional[discord.Member] = None,
+):
+    raw = [first, second, third, fourth, fifth, sixth, seventh, eighth]
+    members = [m for m in raw if m is not None]
+
+    ids = [m.id for m in members]
+    if len(ids) != len(set(ids)):
+        await interaction.response.send_message("❌ Duplicate players detected — each player can only appear once.", ephemeral=True)
+        return
+    if any(m.bot for m in members):
+        await interaction.response.send_message("❌ Bots can't be ranked players.", ephemeral=True)
+        return
+
+    data = load_data()
+
+    player_info = []
+    for i, member in enumerate(members):
+        p = get_player(data, str(member.id))
+        player_info.append({
+            "id": str(member.id),
+            "member": member,
+            "finish": i + 1,
+            "elo": p["elo"],
+            "old_elo": p["elo"],
+        })
+
+    new_elos = calc_multiplayer_elo(player_info)
+
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣"]
+    result_lines = []
+
+    for i, info in enumerate(player_info):
+        p = get_player(data, info["id"])
+        old_elo = info["old_elo"]
+        new_elo = new_elos[i]
+        diff = new_elo - old_elo
+        sign = "+" if diff >= 0 else ""
+        p["elo"] = new_elo
+        if i == 0:
+            p["wins"] += 1
+        else:
+            p["losses"] += 1
+        result_lines.append(
+            f"{medals[i]} **{info['member'].display_name}** — "
+            f"{old_elo} → **{new_elo}** ({sign}{diff})  {rank_label(new_elo)}"
+        )
+
     data["matches"].append({
-        "winner": winner_id,
-        "loser":  loser_id,
-        "winner_civ": your_civ,
-        "loser_civ":  their_civ,
-        "winner_elo_before": old_w_elo,
-        "loser_elo_before":  old_l_elo,
-        "winner_elo_after":  new_w_elo,
-        "loser_elo_after":   new_l_elo,
+        "type": f"{len(members)}-player",
+        "players": [
+            {
+                "id": info["id"],
+                "finish": info["finish"],
+                "elo_before": info["old_elo"],
+                "elo_after": new_elos[i]
+            }
+            for i, info in enumerate(player_info)
+        ],
         "played_at": datetime.utcnow().isoformat()
     })
 
     save_data(data)
 
-    civ_line = ""
-    if your_civ or their_civ:
-        civ_line = f"\n🗺️  **{your_civ or '?'}** vs **{their_civ or '?'}**"
-
     embed = discord.Embed(
-        title="🏅  Match Recorded!",
+        title=f"🏛️  {len(members)}-Player Match Recorded!",
+        description="\n".join(result_lines),
         color=0xD4A017
     )
-    embed.add_field(
-        name=f"🥇 {interaction.user.display_name}",
-        value=f"Elo: **{old_w_elo}** → **{new_w_elo}** (+{new_w_elo - old_w_elo})\n{rank_label(new_w_elo)}",
-        inline=True
-    )
-    embed.add_field(
-        name=f"💀 {loser.display_name}",
-        value=f"Elo: **{old_l_elo}** → **{new_l_elo}** ({new_l_elo - old_l_elo})\n{rank_label(new_l_elo)}",
-        inline=True
-    )
-    if civ_line:
-        embed.set_footer(text=f"Civs played:{civ_line.strip()}")
-
+    embed.set_footer(text=f"Reported by {interaction.user.display_name}")
     await interaction.response.send_message(embed=embed)
 
 # ── /leaderboard ──────────────────────────────────────────────────────────────
@@ -269,17 +345,14 @@ async def profile(interaction: discord.Interaction, player: Optional[discord.Mem
     winrate = round(w / (w + l) * 100) if (w + l) > 0 else 0
 
     embed = discord.Embed(title=f"📜  {target.display_name}'s Profile", color=0x4682B4)
-    embed.add_field(name="Elo",      value=f"**{stats['elo']}**",          inline=True)
-    embed.add_field(name="Rank",     value=rank_label(stats["elo"]),        inline=True)
-    embed.add_field(name="Record",   value=f"{w}W / {l}L ({winrate}% WR)", inline=True)
+    embed.add_field(name="Elo",    value=f"**{stats['elo']}**",          inline=True)
+    embed.add_field(name="Rank",   value=rank_label(stats["elo"]),        inline=True)
+    embed.add_field(name="Record", value=f"{w}W / {l}L ({winrate}% WR)", inline=True)
 
-    # Top 3 civs by games played
     civs = stats.get("civs", {})
     if civs:
         civ_lines = sorted(civs.items(), key=lambda x: x[1]["wins"] + x[1]["losses"], reverse=True)[:5]
-        civ_text = "\n".join(
-            f"**{c}** — {v['wins']}W / {v['losses']}L" for c, v in civ_lines
-        )
+        civ_text = "\n".join(f"**{c}** — {v['wins']}W / {v['losses']}L" for c, v in civ_lines)
         embed.add_field(name="🗺️  Most Played Civs", value=civ_text, inline=False)
 
     await interaction.response.send_message(embed=embed)
@@ -303,17 +376,17 @@ async def stats(interaction: discord.Interaction):
     total = len(matches)
     total_players = len(players)
 
-    civ_wins: dict[str, int] = {}
+    sizes = {}
     for m in matches:
-        if m.get("winner_civ"):
-            civ_wins[m["winner_civ"]] = civ_wins.get(m["winner_civ"], 0) + 1
+        t = m.get("type", "unknown")
+        sizes[t] = sizes.get(t, 0) + 1
 
-    top_civ = max(civ_wins, key=civ_wins.get) if civ_wins else "N/A"
+    size_text = "\n".join(f"{k}: {v}" for k, v in sorted(sizes.items())) or "N/A"
 
     embed = discord.Embed(title="📊  Server Stats", color=0x6B238E)
     embed.add_field(name="Total Matches",  value=str(total),         inline=True)
     embed.add_field(name="Ranked Players", value=str(total_players), inline=True)
-    embed.add_field(name="🏆 Best Civ",    value=top_civ,            inline=True)
+    embed.add_field(name="Game Types",     value=size_text,          inline=False)
     await interaction.response.send_message(embed=embed)
 
 # ── Run ───────────────────────────────────────────────────────────────────────
