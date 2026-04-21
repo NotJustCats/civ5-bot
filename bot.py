@@ -11,6 +11,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 DATA_FILE = "ranked_data.json"
 STARTING_ELO = 1000
 K_FACTOR = 32
+MAX_LOBBY_SIZE = 8
 
 # All Civ 5 civs (BNW + Gods & Kings + Lek mod)
 ALL_CIVS = sorted([
@@ -38,7 +39,7 @@ def load_data() -> dict:
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
             return json.load(f)
-    return {"players": {}, "challenges": {}, "matches": []}
+    return {"players": {}, "challenges": {}, "lobbies": {}, "matches": []}
 
 def save_data(data: dict):
     with open(DATA_FILE, "w") as f:
@@ -55,11 +56,6 @@ def get_player(data: dict, user_id: str) -> dict:
     return data["players"][user_id]
 
 def calc_multiplayer_elo(players: list) -> list:
-    """
-    Elo for 2-8 players based on finishing position.
-    Every player is compared against every other player pairwise.
-    K factor scales down in larger games so total swing stays fair.
-    """
     n = len(players)
     deltas = [0.0] * n
     for i in range(n):
@@ -80,6 +76,19 @@ def rank_label(elo: int) -> str:
     if elo >= 1000: return "🌿 Chieftain"
     return              "🪨 Settler"
 
+def lobby_embed(host_name: str, players: list, status: str = "open") -> discord.Embed:
+    """Build a lobby status embed."""
+    color = 0x4CAF50 if status == "open" else 0xD4A017
+    title = "🏛️  Game Lobby — Open" if status == "open" else "⚔️  Game Started!"
+    player_list = "\n".join(f"• {p}" for p in players)
+    embed = discord.Embed(title=title, color=color)
+    embed.add_field(name=f"Host: {host_name}", value=player_list or "No players yet", inline=False)
+    if status == "open":
+        embed.set_footer(text="Type /join_lobby @host to join • Host uses /start_game to begin")
+    else:
+        embed.set_footer(text="Game in progress — use /report_results when done")
+    return embed
+
 # ── Bot setup ────────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
 intents.message_content = True
@@ -90,8 +99,193 @@ async def on_ready():
     await bot.tree.sync()
     print(f"✅  Logged in as {bot.user} — slash commands synced.")
 
+# ── /open_lobby ───────────────────────────────────────────────────────────────
+@bot.tree.command(name="open_lobby", description="Open a ranked game lobby — others can join with /join_lobby")
+async def open_lobby(interaction: discord.Interaction):
+    data = load_data()
+    if "lobbies" not in data:
+        data["lobbies"] = {}
+
+    host_id = str(interaction.user.id)
+
+    if host_id in data["lobbies"]:
+        await interaction.response.send_message("⚠️ You already have an open lobby! Close it with `/cancel_game` first.", ephemeral=True)
+        return
+
+    # Check if user is already in someone else's lobby
+    for lid, lobby in data["lobbies"].items():
+        if host_id in lobby["players"]:
+            await interaction.response.send_message("⚠️ You're already in an open lobby. Leave it with `/leave_lobby` first.", ephemeral=True)
+            return
+
+    data["lobbies"][host_id] = {
+        "host": host_id,
+        "host_name": interaction.user.display_name,
+        "players": [host_id],
+        "player_names": [interaction.user.display_name],
+        "created_at": datetime.utcnow().isoformat()
+    }
+    save_data(data)
+
+    embed = lobby_embed(interaction.user.display_name, [interaction.user.display_name])
+    await interaction.response.send_message(embed=embed)
+
+# ── /join_lobby ───────────────────────────────────────────────────────────────
+@bot.tree.command(name="join_lobby", description="Join an open ranked lobby")
+@app_commands.describe(host="The player who opened the lobby")
+async def join_lobby(interaction: discord.Interaction, host: discord.Member):
+    data = load_data()
+    if "lobbies" not in data:
+        data["lobbies"] = {}
+
+    host_id = str(host.id)
+    joiner_id = str(interaction.user.id)
+
+    if host_id not in data["lobbies"]:
+        await interaction.response.send_message(f"❌ {host.display_name} doesn't have an open lobby.", ephemeral=True)
+        return
+
+    lobby = data["lobbies"][host_id]
+
+    if joiner_id in lobby["players"]:
+        await interaction.response.send_message("⚠️ You're already in this lobby!", ephemeral=True)
+        return
+
+    # Check not already in another lobby
+    for lid, l in data["lobbies"].items():
+        if joiner_id in l["players"] and lid != host_id:
+            await interaction.response.send_message("⚠️ You're already in another lobby. Leave it with `/leave_lobby` first.", ephemeral=True)
+            return
+
+    if len(lobby["players"]) >= MAX_LOBBY_SIZE:
+        await interaction.response.send_message(f"❌ Lobby is full ({MAX_LOBBY_SIZE} players max).", ephemeral=True)
+        return
+
+    lobby["players"].append(joiner_id)
+    lobby["player_names"].append(interaction.user.display_name)
+    save_data(data)
+
+    embed = lobby_embed(lobby["host_name"], lobby["player_names"])
+    await interaction.response.send_message(embed=embed)
+
+# ── /leave_lobby ──────────────────────────────────────────────────────────────
+@bot.tree.command(name="leave_lobby", description="Leave a lobby you've joined")
+async def leave_lobby(interaction: discord.Interaction):
+    data = load_data()
+    if "lobbies" not in data:
+        data["lobbies"] = {}
+
+    leaver_id = str(interaction.user.id)
+
+    # Find the lobby this person is in
+    found_lobby_id = None
+    for lid, lobby in data["lobbies"].items():
+        if leaver_id in lobby["players"]:
+            found_lobby_id = lid
+            break
+
+    if not found_lobby_id:
+        await interaction.response.send_message("❌ You're not in any open lobby.", ephemeral=True)
+        return
+
+    lobby = data["lobbies"][found_lobby_id]
+
+    # If they're the host, close the whole lobby
+    if leaver_id == found_lobby_id:
+        del data["lobbies"][found_lobby_id]
+        save_data(data)
+        embed = discord.Embed(
+            title="🚫  Lobby Closed",
+            description=f"{interaction.user.mention} (host) closed the lobby. No Elo changes.",
+            color=0x888888
+        )
+        await interaction.response.send_message(embed=embed)
+        return
+
+    # Otherwise just remove them
+    idx = lobby["players"].index(leaver_id)
+    lobby["players"].pop(idx)
+    lobby["player_names"].pop(idx)
+    save_data(data)
+
+    embed = lobby_embed(lobby["host_name"], lobby["player_names"])
+    embed.description = f"{interaction.user.mention} left the lobby."
+    await interaction.response.send_message(embed=embed)
+
+# ── /start_game ───────────────────────────────────────────────────────────────
+@bot.tree.command(name="start_game", description="Start your lobby — locks it in and begins the ranked game")
+async def start_game(interaction: discord.Interaction):
+    data = load_data()
+    if "lobbies" not in data:
+        data["lobbies"] = {}
+
+    host_id = str(interaction.user.id)
+
+    if host_id not in data["lobbies"]:
+        await interaction.response.send_message("❌ You don't have an open lobby. Use `/open_lobby` first.", ephemeral=True)
+        return
+
+    lobby = data["lobbies"][host_id]
+
+    if len(lobby["players"]) < 2:
+        await interaction.response.send_message("❌ You need at least 2 players to start a game.", ephemeral=True)
+        return
+
+    # Lock the lobby by removing it — game is now in progress
+    player_names = lobby["player_names"]
+    del data["lobbies"][host_id]
+    save_data(data)
+
+    mentions = " ".join(f"<@{pid}>" for pid in lobby["players"])
+    embed = discord.Embed(
+        title="⚔️  Game Started!",
+        description=f"**{len(player_names)}-player ranked game is underway!**\n\n"
+                    f"Players: {mentions}\n\n"
+                    f"When the game ends, use:\n"
+                    f"`/report_results @1st @2nd @3rd ...` in finishing order",
+        color=0xD4A017
+    )
+    embed.set_footer(text=f"Game started by {interaction.user.display_name}")
+    await interaction.response.send_message(embed=embed)
+
+# ── /cancel_game ─────────────────────────────────────────────────────────────
+@bot.tree.command(name="cancel_game", description="Cancel your open lobby or an unfinished game")
+async def cancel_game(interaction: discord.Interaction):
+    data = load_data()
+    if "lobbies" not in data:
+        data["lobbies"] = {}
+
+    caller_id = str(interaction.user.id)
+
+    # Check if they have a lobby open
+    if caller_id in data["lobbies"]:
+        lobby = data["lobbies"][caller_id]
+        player_names = lobby["player_names"]
+        del data["lobbies"][caller_id]
+        save_data(data)
+        embed = discord.Embed(
+            title="🚫  Lobby Cancelled",
+            description=f"{interaction.user.mention} cancelled the lobby.\n"
+                        f"Players affected: {', '.join(player_names)}\n\n"
+                        "No Elo changes have been made.",
+            color=0x888888
+        )
+        await interaction.response.send_message(embed=embed)
+        return
+
+    # Check if they're in someone else's lobby (only host can cancel)
+    for lid, lobby in data["lobbies"].items():
+        if caller_id in lobby["players"]:
+            await interaction.response.send_message(
+                "❌ Only the host can cancel a lobby. Use `/leave_lobby` to leave instead.",
+                ephemeral=True
+            )
+            return
+
+    await interaction.response.send_message("❌ You don't have an open lobby to cancel.", ephemeral=True)
+
 # ── /challenge ───────────────────────────────────────────────────────────────
-@bot.tree.command(name="challenge", description="Challenge another player to a ranked 1v1")
+@bot.tree.command(name="challenge", description="Challenge another player to a quick ranked 1v1")
 @app_commands.describe(opponent="The player you want to challenge")
 async def challenge(interaction: discord.Interaction, opponent: discord.Member):
     if opponent.bot or opponent.id == interaction.user.id:
@@ -100,6 +294,9 @@ async def challenge(interaction: discord.Interaction, opponent: discord.Member):
 
     data = load_data()
     key = f"{interaction.user.id}-{opponent.id}"
+
+    if "challenges" not in data:
+        data["challenges"] = {}
 
     if key in data["challenges"]:
         await interaction.response.send_message("⚠️ You already have an open challenge against that player!", ephemeral=True)
@@ -121,13 +318,13 @@ async def challenge(interaction: discord.Interaction, opponent: discord.Member):
     await interaction.response.send_message(embed=embed)
 
 # ── /accept ──────────────────────────────────────────────────────────────────
-@bot.tree.command(name="accept", description="Accept a pending challenge")
+@bot.tree.command(name="accept", description="Accept a pending 1v1 challenge")
 @app_commands.describe(challenger="The player who challenged you")
 async def accept(interaction: discord.Interaction, challenger: discord.Member):
     data = load_data()
     key = f"{challenger.id}-{interaction.user.id}"
 
-    if key not in data["challenges"]:
+    if key not in data.get("challenges", {}):
         await interaction.response.send_message("❌ No pending challenge from that player.", ephemeral=True)
         return
 
@@ -138,69 +335,8 @@ async def accept(interaction: discord.Interaction, challenger: discord.Member):
         title="✅  Challenge Accepted!",
         description=f"{interaction.user.mention} has accepted {challenger.mention}'s challenge!\n\n"
                     "🎮 **Go play your game!** When done, report results with:\n"
-                    "`/report_results @1st @2nd` (add more players for multiplayer)",
+                    "`/report_results @1st @2nd`",
         color=0x4CAF50
-    )
-    await interaction.response.send_message(embed=embed)
-
-# ── /cancel_game ─────────────────────────────────────────────────────────────
-@bot.tree.command(name="cancel_game", description="Cancel an unfinished game — no Elo changes")
-@app_commands.describe(
-    player2="Another player in the game",
-    player3="(optional)",
-    player4="(optional)",
-    player5="(optional)",
-    player6="(optional)",
-    player7="(optional)",
-    player8="(optional)",
-)
-async def cancel_game(
-    interaction: discord.Interaction,
-    player2: discord.Member,
-    player3: Optional[discord.Member] = None,
-    player4: Optional[discord.Member] = None,
-    player5: Optional[discord.Member] = None,
-    player6: Optional[discord.Member] = None,
-    player7: Optional[discord.Member] = None,
-    player8: Optional[discord.Member] = None,
-):
-    raw = [interaction.user, player2, player3, player4, player5, player6, player7, player8]
-    members = [m for m in raw if m is not None]
-    caller_id = interaction.user.id
-
-    # Make sure the caller is actually one of the players (always true since
-    # interaction.user is always included, but good to be explicit)
-    member_ids = [m.id for m in members]
-    if caller_id not in member_ids:
-        await interaction.response.send_message("❌ You can only cancel games you're part of.", ephemeral=True)
-        return
-
-    data = load_data()
-
-    # Look for any open challenge involving these players and remove it
-    keys_to_delete = []
-    for key in data.get("challenges", {}):
-        parts = key.split("-")
-        if len(parts) == 2:
-            a, b = int(parts[0]), int(parts[1])
-            if a in member_ids and b in member_ids:
-                keys_to_delete.append(key)
-
-    for key in keys_to_delete:
-        del data["challenges"][key]
-
-    if keys_to_delete:
-        save_data(data)
-
-    # Build mention list for the embed (everyone except the caller)
-    others = [m.mention for m in members if m.id != caller_id]
-    others_str = ", ".join(others) if others else "the other players"
-
-    embed = discord.Embed(
-        title="🚫  Game Cancelled",
-        description=f"{interaction.user.mention} has cancelled the game with {others_str}.\n\n"
-                    "No Elo changes have been made.",
-        color=0x888888
     )
     await interaction.response.send_message(embed=embed)
 
@@ -235,7 +371,7 @@ async def report_results(
 
     ids = [m.id for m in members]
     if len(ids) != len(set(ids)):
-        await interaction.response.send_message("❌ Duplicate players detected — each player can only appear once.", ephemeral=True)
+        await interaction.response.send_message("❌ Duplicate players detected.", ephemeral=True)
         return
     if any(m.bot for m in members):
         await interaction.response.send_message("❌ Bots can't be ranked players.", ephemeral=True)
