@@ -140,15 +140,14 @@ def build_graph_html(guild_id: str) -> str:
         for p in m.get("players", []):
             active_ids.add(p["id"])
 
+    # Build Elo timeline
     current_elo = {pid: 1000 for pid in active_ids}
     timeline = [{"label": "Start", **{pid: 1000 for pid in active_ids}}]
-
     sorted_matches = sorted(matches, key=lambda m: m.get("played_at", ""))
     game_num = 0
     for match in sorted_matches:
         date_str = match.get("played_at", "")[:10]
         if match.get("type") == "reset":
-            # Reset all Elos back to 1000 at this point in the timeline
             for pid in active_ids:
                 current_elo[pid] = 1000
             timeline.append({"label": f"RESET ({date_str})", **{pid: current_elo[pid] for pid in active_ids}})
@@ -169,16 +168,41 @@ def build_graph_html(guild_id: str) -> str:
         for i, pid in enumerate(sorted(active_ids, key=lambda x: players.get(x, {}).get("elo", 0), reverse=True))
     ]
 
+    # Build civ play counts for pie chart (top 12)
+    civ_counts = {}
+    for m in sorted_matches:
+        if m.get("type") in ("reset", None):
+            continue
+        for p in m.get("players", []):
+            civ = p.get("civ")
+            if civ:
+                civ_counts[civ] = civ_counts.get(civ, 0) + 1
+    top_civs = sorted(civ_counts.items(), key=lambda x: x[1], reverse=True)[:12]
+    pie_labels = [c for c, _ in top_civs]
+    pie_values = [v for _, v in top_civs]
+
+    # Build leaderboard data (wins/losses per player)
+    lb_data = {
+        pid: {
+            "wins": players.get(pid, {}).get("wins", 0),
+            "losses": players.get(pid, {}).get("losses", 0),
+        }
+        for pid in active_ids
+    }
+
     import json as _json
     timeline_json = _json.dumps(timeline)
     players_json = _json.dumps(player_list)
+    pie_labels_json = _json.dumps(pie_labels)
+    pie_values_json = _json.dumps(pie_values)
+    lb_data_json = _json.dumps(lb_data)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Civ 5 Ranked — Elo Graph</title>
+<title>Civ 5 Ranked — Stats</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
@@ -187,37 +211,53 @@ def build_graph_html(guild_id: str) -> str:
   h1 {{ font-family: 'Cinzel', serif; font-size: 24px; color: #f97316; letter-spacing: 3px; text-shadow: 0 0 30px rgba(249,115,22,0.4); margin-bottom: 4px; }}
   .subtitle {{ color: #475569; font-size: 11px; letter-spacing: 2px; margin-bottom: 24px; }}
   .card {{ background: #0d1017; border: 1px solid #1e2130; border-radius: 12px; padding: 20px; margin-bottom: 20px; }}
+  .card-title {{ color: #94a3b8; font-size: 11px; letter-spacing: 2px; margin-bottom: 16px; }}
   .player-grid {{ display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }}
   .player-btn {{ border-radius: 8px; padding: 8px 14px; cursor: pointer; border-width: 1px; border-style: solid; background: transparent; font-family: 'IBM Plex Mono', monospace; transition: opacity 0.15s; text-align: left; }}
   .player-btn.hidden {{ opacity: 0.3; }}
   .player-name {{ font-weight: 600; font-size: 13px; }}
   .player-elo {{ font-size: 11px; color: #64748b; margin-top: 2px; }}
   .rank-toggle {{ display: flex; align-items: center; gap: 8px; color: #475569; font-size: 11px; cursor: pointer; margin-bottom: 16px; }}
+  .two-col {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }}
+  @media (max-width: 700px) {{ .two-col {{ grid-template-columns: 1fr; }} }}
   canvas {{ width: 100% !important; }}
   .footer {{ text-align: center; color: #1e2130; font-size: 10px; letter-spacing: 3px; margin-top: 16px; }}
   .empty {{ text-align: center; color: #334155; padding: 60px; font-size: 13px; }}
 </style>
 </head>
 <body>
-<h1>⚔️ CIV 5 ELO TRACKER</h1>
-<p class="subtitle">RANKED LADDER · LIVE DATA</p>
+<h1>⚔️ CIV 5 RANKED STATS</h1>
+<p class="subtitle">LIVE DATA · REFRESH FOR LATEST</p>
+
 <div class="player-grid" id="playerGrid"></div>
 <label class="rank-toggle"><input type="checkbox" id="rankToggle" checked onchange="toggleRanks()"> SHOW RANK LINES</label>
-<div class="card" id="chartCard">
+
+<div class="card" id="eloCard">
+  <p class="card-title">ELO PROGRESSION OVER TIME</p>
   <canvas id="eloChart"></canvas>
 </div>
+
+<div class="two-col">
+  <div class="card" id="pieCard">
+    <p class="card-title">MOST PLAYED CIVILIZATIONS</p>
+    <canvas id="pieChart"></canvas>
+  </div>
+  <div class="card" id="lbCard">
+    <p class="card-title">LEADERBOARD</p>
+    <div id="lbList"></div>
+  </div>
+</div>
+
 <p class="footer">CIV 5 RANKED · CLICK PLAYERS TO TOGGLE · REFRESH FOR LATEST DATA</p>
+
 <script>
 const TIMELINE = {timeline_json};
 const PLAYERS = {players_json};
-const PALETTE = ["#f97316","#3b82f6","#a855f7","#22c55e","#ef4444","#eab308","#06b6d4","#ec4899"];
-const RANK_THRESHOLDS = [
-  {{y:1800,label:"Deity",color:"rgba(255,215,0,0.15)"}},
-  {{y:1600,label:"Emperor",color:"rgba(192,132,252,0.15)"}},
-  {{y:1400,label:"King",color:"rgba(96,165,250,0.15)"}},
-  {{y:1200,label:"Prince",color:"rgba(74,222,128,0.15)"}},
-  {{y:1000,label:"Chieftain",color:"rgba(148,163,184,0.1)"}},
-];
+const PIE_LABELS = {pie_labels_json};
+const PIE_VALUES = {pie_values_json};
+const LB_DATA = {lb_data_json};
+const PALETTE = ["#f97316","#3b82f6","#a855f7","#22c55e","#ef4444","#eab308","#06b6d4","#ec4899","#f43f5e","#10b981","#8b5cf6","#0ea5e9"];
+
 function rankLabel(elo) {{
   if (elo>=1800) return "🏆 Deity";
   if (elo>=1600) return "⚔️ Emperor";
@@ -226,8 +266,11 @@ function rankLabel(elo) {{
   if (elo>=1000) return "🌿 Chieftain";
   return "🪨 Settler";
 }}
+
+// ── Elo line chart ────────────────────────────────────────────────────────────
 if (!PLAYERS.length) {{
-  document.getElementById("chartCard").innerHTML = '<p class="empty">No matches played yet in this server.</p>';
+  document.getElementById("eloCard").innerHTML = '<p class="empty">No matches played yet in this server.</p>';
+  document.getElementById("pieCard").innerHTML = '<p class="empty">No civ data yet.</p>';
 }} else {{
   const hidden = new Set();
   const labels = TIMELINE.map(t => t.label);
@@ -238,8 +281,9 @@ if (!PLAYERS.length) {{
     backgroundColor: PALETTE[i % PALETTE.length],
     borderWidth: 2.5, pointRadius: 4, pointHoverRadius: 7, tension: 0.3,
   }}));
-  const ctx = document.getElementById("eloChart").getContext("2d");
-  const chart = new Chart(ctx, {{
+
+  const eloCtx = document.getElementById("eloChart").getContext("2d");
+  const eloChart = new Chart(eloCtx, {{
     type: "line",
     data: {{ labels, datasets }},
     options: {{
@@ -261,6 +305,8 @@ if (!PLAYERS.length) {{
       }}
     }}
   }});
+
+  // Player toggle buttons
   const grid = document.getElementById("playerGrid");
   PLAYERS.forEach((p, i) => {{
     const color = PALETTE[i % PALETTE.length];
@@ -271,20 +317,89 @@ if (!PLAYERS.length) {{
     btn.style.color = color;
     btn.innerHTML = `<div class="player-name">${{medals[i] || "#"+(i+1)}} ${{p.name}}</div><div class="player-elo">${{p.finalElo}} Elo · ${{rankLabel(p.finalElo)}}</div>`;
     btn.onclick = () => {{
-      const ds = chart.data.datasets[i];
+      const ds = eloChart.data.datasets[i];
       if (hidden.has(p.id)) {{
         hidden.delete(p.id); ds.borderWidth = 2.5; ds.pointRadius = 4; btn.classList.remove("hidden");
       }} else {{
         hidden.add(p.id); ds.borderWidth = 0; ds.pointRadius = 0; btn.classList.add("hidden");
       }}
-      chart.update();
+      eloChart.update();
     }};
     grid.appendChild(btn);
   }});
+
   function toggleRanks() {{
-    chart.options.scales.y.min = document.getElementById("rankToggle").checked ? 800 : undefined;
-    chart.update();
+    eloChart.options.scales.y.min = document.getElementById("rankToggle").checked ? 800 : undefined;
+    eloChart.update();
   }}
+
+  // ── Pie chart ───────────────────────────────────────────────────────────────
+  if (PIE_LABELS.length) {{
+    const pieCtx = document.getElementById("pieChart").getContext("2d");
+    new Chart(pieCtx, {{
+      type: "doughnut",
+      data: {{
+        labels: PIE_LABELS,
+        datasets: [{{
+          data: PIE_VALUES,
+          backgroundColor: PALETTE.concat(PALETTE),
+          borderColor: "#080a0f",
+          borderWidth: 2,
+          hoverOffset: 8,
+        }}]
+      }},
+      options: {{
+        responsive: true,
+        plugins: {{
+          legend: {{
+            position: "right",
+            labels: {{
+              color: "#94a3b8",
+              font: {{family:"IBM Plex Mono", size:10}},
+              boxWidth: 12,
+              padding: 10,
+            }}
+          }},
+          tooltip: {{
+            backgroundColor: "#0f1117", borderColor: "#2a2d3a", borderWidth: 1,
+            titleColor: "#64748b", bodyColor: "#e2e8f0",
+            titleFont: {{family:"IBM Plex Mono",size:11}},
+            bodyFont: {{family:"IBM Plex Mono",size:12}},
+            callbacks: {{
+              label: ctx => ` ${{ctx.label}}: ${{ctx.parsed}} game${{ctx.parsed !== 1 ? "s" : ""}}`
+            }}
+          }}
+        }}
+      }}
+    }});
+  }} else {{
+    document.getElementById("pieCard").innerHTML = '<p class="empty">No civ data yet.</p>';
+  }}
+
+  // ── Leaderboard ─────────────────────────────────────────────────────────────
+  const lbList = document.getElementById("lbList");
+  const medals = ["🥇","🥈","🥉"];
+  PLAYERS.forEach((p, i) => {{
+    const color = PALETTE[i % PALETTE.length];
+    const wins = LB_DATA[p.id]?.wins || 0;
+    const losses = LB_DATA[p.id]?.losses || 0;
+    const total = wins + losses;
+    const wr = total > 0 ? Math.round(wins / total * 100) : 0;
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #1a1f2e;";
+    row.innerHTML = `
+      <span style="font-size:18px;width:28px;text-align:center">${{medals[i] || "#"+(i+1)}}</span>
+      <div style="flex:1">
+        <div style="font-weight:600;font-size:13px;color:${{color}}">${{p.name}}</div>
+        <div style="font-size:10px;color:#475569;margin-top:3px">${{wins}}W / ${{losses}}L · ${{wr}}% WR</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-weight:700;font-size:14px;color:#e2e8f0">${{p.finalElo}}</div>
+        <div style="font-size:10px;color:#475569;margin-top:2px">${{rankLabel(p.finalElo)}}</div>
+      </div>
+    `;
+    lbList.appendChild(row);
+  }});
 }}
 </script>
 </body>
