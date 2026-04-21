@@ -39,7 +39,7 @@ def load_data() -> dict:
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
             return json.load(f)
-    return {"players": {}, "challenges": {}, "lobbies": {}, "matches": []}
+    return {"players": {}, "lobbies": {}, "matches": []}
 
 def save_data(data: dict):
     with open(DATA_FILE, "w") as f:
@@ -55,18 +55,34 @@ def get_player(data: dict, user_id: str) -> dict:
         }
     return data["players"][user_id]
 
+FLOOR_ELO = 100
+
 def calc_multiplayer_elo(players: list) -> list:
+    """
+    Zero-sum Elo for 2-8 players.
+    Soft floor rule: if a loser is already at the floor, they give up nothing
+    and the winner gains nothing from that pairing. No Elo is created or destroyed.
+    """
     n = len(players)
     deltas = [0.0] * n
+
     for i in range(n):
         for j in range(n):
             if i == j:
                 continue
-            score = 1 if players[i]["finish"] < players[j]["finish"] else 0
-            expected = 1 / (1 + 10 ** ((players[j]["elo"] - players[i]["elo"]) / 400))
+
+            i_beat_j = players[i]["finish"] < players[j]["finish"]
+            expected_i = 1 / (1 + 10 ** ((players[j]["elo"] - players[i]["elo"]) / 400))
             k = K_FACTOR / (n - 1)
-            deltas[i] += k * (score - expected)
-    return [max(round(players[i]["elo"] + deltas[i]), 100) for i in range(n)]
+            raw_delta = k * ((1 if i_beat_j else 0) - expected_i)
+
+            # Soft floor: if j is floored and i is taking from j (i won), skip
+            if i_beat_j and players[j]["elo"] <= FLOOR_ELO:
+                continue  # j can't give Elo they don't have — i gains nothing
+
+            deltas[i] += raw_delta
+
+    return [max(round(players[i]["elo"] + deltas[i]), FLOOR_ELO) for i in range(n)]
 
 def rank_label(elo: int) -> str:
     if elo >= 1800: return "🏆 Deity"
@@ -76,17 +92,18 @@ def rank_label(elo: int) -> str:
     if elo >= 1000: return "🌿 Chieftain"
     return              "🪨 Settler"
 
-def lobby_embed(host_name: str, players: list, status: str = "open") -> discord.Embed:
-    """Build a lobby status embed."""
+def build_lobby_embed(lobby: dict, status: str = "open") -> discord.Embed:
     color = 0x4CAF50 if status == "open" else 0xD4A017
     title = "🏛️  Game Lobby — Open" if status == "open" else "⚔️  Game Started!"
-    player_list = "\n".join(f"• {p}" for p in players)
+    lines = []
+    for name, civ in zip(lobby["player_names"], lobby["player_civs"]):
+        lines.append(f"• **{name}** — {civ}")
     embed = discord.Embed(title=title, color=color)
-    embed.add_field(name=f"Host: {host_name}", value=player_list or "No players yet", inline=False)
+    embed.add_field(name=f"Host: {lobby['host_name']}", value="\n".join(lines) or "—", inline=False)
     if status == "open":
-        embed.set_footer(text="Type /join_lobby @host to join • Host uses /start_game to begin")
+        embed.set_footer(text="Use /join_lobby @host [civ] to join • Host uses /start_game to begin")
     else:
-        embed.set_footer(text="Game in progress — use /report_results when done")
+        embed.set_footer(text="Game in progress — use /report_results when done, in finishing order")
     return embed
 
 # ── Bot setup ────────────────────────────────────────────────────────────────
@@ -100,8 +117,14 @@ async def on_ready():
     print(f"✅  Logged in as {bot.user} — slash commands synced.")
 
 # ── /open_lobby ───────────────────────────────────────────────────────────────
-@bot.tree.command(name="open_lobby", description="Open a ranked game lobby — others can join with /join_lobby")
-async def open_lobby(interaction: discord.Interaction):
+@bot.tree.command(name="open_lobby", description="Open a ranked game lobby")
+@app_commands.describe(civ="The civilization you are playing")
+async def open_lobby(interaction: discord.Interaction, civ: str):
+    if civ not in ALL_CIVS:
+        await interaction.response.send_message(
+            f"❌ Unknown civ `{civ}`. Use `/civs` to see the full list.", ephemeral=True)
+        return
+
     data = load_data()
     if "lobbies" not in data:
         data["lobbies"] = {}
@@ -109,13 +132,12 @@ async def open_lobby(interaction: discord.Interaction):
     host_id = str(interaction.user.id)
 
     if host_id in data["lobbies"]:
-        await interaction.response.send_message("⚠️ You already have an open lobby! Close it with `/cancel_game` first.", ephemeral=True)
+        await interaction.response.send_message("⚠️ You already have an open lobby! Use `/cancel_game` to close it first.", ephemeral=True)
         return
 
-    # Check if user is already in someone else's lobby
     for lid, lobby in data["lobbies"].items():
         if host_id in lobby["players"]:
-            await interaction.response.send_message("⚠️ You're already in an open lobby. Leave it with `/leave_lobby` first.", ephemeral=True)
+            await interaction.response.send_message("⚠️ You're already in an open lobby. Use `/leave_lobby` first.", ephemeral=True)
             return
 
     data["lobbies"][host_id] = {
@@ -123,17 +145,26 @@ async def open_lobby(interaction: discord.Interaction):
         "host_name": interaction.user.display_name,
         "players": [host_id],
         "player_names": [interaction.user.display_name],
+        "player_civs": [civ],
         "created_at": datetime.utcnow().isoformat()
     }
     save_data(data)
 
-    embed = lobby_embed(interaction.user.display_name, [interaction.user.display_name])
+    embed = build_lobby_embed(data["lobbies"][host_id])
     await interaction.response.send_message(embed=embed)
 
 # ── /join_lobby ───────────────────────────────────────────────────────────────
 @bot.tree.command(name="join_lobby", description="Join an open ranked lobby")
-@app_commands.describe(host="The player who opened the lobby")
-async def join_lobby(interaction: discord.Interaction, host: discord.Member):
+@app_commands.describe(
+    host="The player who opened the lobby",
+    civ="The civilization you are playing"
+)
+async def join_lobby(interaction: discord.Interaction, host: discord.Member, civ: str):
+    if civ not in ALL_CIVS:
+        await interaction.response.send_message(
+            f"❌ Unknown civ `{civ}`. Use `/civs` to see the full list.", ephemeral=True)
+        return
+
     data = load_data()
     if "lobbies" not in data:
         data["lobbies"] = {}
@@ -151,34 +182,39 @@ async def join_lobby(interaction: discord.Interaction, host: discord.Member):
         await interaction.response.send_message("⚠️ You're already in this lobby!", ephemeral=True)
         return
 
-    # Check not already in another lobby
     for lid, l in data["lobbies"].items():
         if joiner_id in l["players"] and lid != host_id:
-            await interaction.response.send_message("⚠️ You're already in another lobby. Leave it with `/leave_lobby` first.", ephemeral=True)
+            await interaction.response.send_message("⚠️ You're already in another lobby. Use `/leave_lobby` first.", ephemeral=True)
             return
 
     if len(lobby["players"]) >= MAX_LOBBY_SIZE:
         await interaction.response.send_message(f"❌ Lobby is full ({MAX_LOBBY_SIZE} players max).", ephemeral=True)
         return
 
+    # Check civ not already taken
+    if civ in lobby["player_civs"]:
+        await interaction.response.send_message(
+            f"❌ **{civ}** is already taken by another player in this lobby. Pick a different civ!", ephemeral=True)
+        return
+
     lobby["players"].append(joiner_id)
     lobby["player_names"].append(interaction.user.display_name)
+    lobby["player_civs"].append(civ)
     save_data(data)
 
-    embed = lobby_embed(lobby["host_name"], lobby["player_names"])
+    embed = build_lobby_embed(lobby)
     await interaction.response.send_message(embed=embed)
 
 # ── /leave_lobby ──────────────────────────────────────────────────────────────
-@bot.tree.command(name="leave_lobby", description="Leave a lobby you've joined")
+@bot.tree.command(name="leave_lobby", description="Leave a lobby you have joined")
 async def leave_lobby(interaction: discord.Interaction):
     data = load_data()
     if "lobbies" not in data:
         data["lobbies"] = {}
 
     leaver_id = str(interaction.user.id)
-
-    # Find the lobby this person is in
     found_lobby_id = None
+
     for lid, lobby in data["lobbies"].items():
         if leaver_id in lobby["players"]:
             found_lobby_id = lid
@@ -190,25 +226,25 @@ async def leave_lobby(interaction: discord.Interaction):
 
     lobby = data["lobbies"][found_lobby_id]
 
-    # If they're the host, close the whole lobby
+    # If host leaves, close the whole lobby
     if leaver_id == found_lobby_id:
         del data["lobbies"][found_lobby_id]
         save_data(data)
         embed = discord.Embed(
             title="🚫  Lobby Closed",
-            description=f"{interaction.user.mention} (host) closed the lobby. No Elo changes.",
+            description=f"{interaction.user.mention} (host) left — lobby has been closed. No Elo changes.",
             color=0x888888
         )
         await interaction.response.send_message(embed=embed)
         return
 
-    # Otherwise just remove them
     idx = lobby["players"].index(leaver_id)
     lobby["players"].pop(idx)
     lobby["player_names"].pop(idx)
+    lobby["player_civs"].pop(idx)
     save_data(data)
 
-    embed = lobby_embed(lobby["host_name"], lobby["player_names"])
+    embed = build_lobby_embed(lobby)
     embed.description = f"{interaction.user.mention} left the lobby."
     await interaction.response.send_message(embed=embed)
 
@@ -228,28 +264,29 @@ async def start_game(interaction: discord.Interaction):
     lobby = data["lobbies"][host_id]
 
     if len(lobby["players"]) < 2:
-        await interaction.response.send_message("❌ You need at least 2 players to start a game.", ephemeral=True)
+        await interaction.response.send_message("❌ You need at least 2 players to start.", ephemeral=True)
         return
 
-    # Lock the lobby by removing it — game is now in progress
-    player_names = lobby["player_names"]
+    player_lines = "\n".join(
+        f"• <@{pid}> — **{civ}**"
+        for pid, civ in zip(lobby["players"], lobby["player_civs"])
+    )
+
     del data["lobbies"][host_id]
     save_data(data)
 
-    mentions = " ".join(f"<@{pid}>" for pid in lobby["players"])
     embed = discord.Embed(
-        title="⚔️  Game Started!",
-        description=f"**{len(player_names)}-player ranked game is underway!**\n\n"
-                    f"Players: {mentions}\n\n"
-                    f"When the game ends, use:\n"
-                    f"`/report_results @1st @2nd @3rd ...` in finishing order",
+        title=f"⚔️  {len(lobby['players'])}-Player Ranked Game Started!",
+        description=f"{player_lines}\n\n"
+                    f"When the game ends, report finishing order with:\n"
+                    f"`/report_results @1st @2nd @3rd ...`",
         color=0xD4A017
     )
-    embed.set_footer(text=f"Game started by {interaction.user.display_name}")
+    embed.set_footer(text=f"Started by {interaction.user.display_name}")
     await interaction.response.send_message(embed=embed)
 
 # ── /cancel_game ─────────────────────────────────────────────────────────────
-@bot.tree.command(name="cancel_game", description="Cancel your open lobby or an unfinished game")
+@bot.tree.command(name="cancel_game", description="Cancel your open lobby — no Elo changes")
 async def cancel_game(interaction: discord.Interaction):
     data = load_data()
     if "lobbies" not in data:
@@ -257,7 +294,6 @@ async def cancel_game(interaction: discord.Interaction):
 
     caller_id = str(interaction.user.id)
 
-    # Check if they have a lobby open
     if caller_id in data["lobbies"]:
         lobby = data["lobbies"][caller_id]
         player_names = lobby["player_names"]
@@ -266,94 +302,36 @@ async def cancel_game(interaction: discord.Interaction):
         embed = discord.Embed(
             title="🚫  Lobby Cancelled",
             description=f"{interaction.user.mention} cancelled the lobby.\n"
-                        f"Players affected: {', '.join(player_names)}\n\n"
+                        f"Players: {', '.join(player_names)}\n\n"
                         "No Elo changes have been made.",
             color=0x888888
         )
         await interaction.response.send_message(embed=embed)
         return
 
-    # Check if they're in someone else's lobby (only host can cancel)
     for lid, lobby in data["lobbies"].items():
         if caller_id in lobby["players"]:
             await interaction.response.send_message(
                 "❌ Only the host can cancel a lobby. Use `/leave_lobby` to leave instead.",
-                ephemeral=True
-            )
+                ephemeral=True)
             return
 
     await interaction.response.send_message("❌ You don't have an open lobby to cancel.", ephemeral=True)
 
-# ── /challenge ───────────────────────────────────────────────────────────────
-@bot.tree.command(name="challenge", description="Challenge another player to a quick ranked 1v1")
-@app_commands.describe(opponent="The player you want to challenge")
-async def challenge(interaction: discord.Interaction, opponent: discord.Member):
-    if opponent.bot or opponent.id == interaction.user.id:
-        await interaction.response.send_message("❌ Invalid opponent.", ephemeral=True)
-        return
-
-    data = load_data()
-    key = f"{interaction.user.id}-{opponent.id}"
-
-    if "challenges" not in data:
-        data["challenges"] = {}
-
-    if key in data["challenges"]:
-        await interaction.response.send_message("⚠️ You already have an open challenge against that player!", ephemeral=True)
-        return
-
-    data["challenges"][key] = {
-        "challenger": interaction.user.id,
-        "opponent":   opponent.id,
-        "created_at": datetime.utcnow().isoformat()
-    }
-    save_data(data)
-
-    embed = discord.Embed(
-        title="⚔️  Ranked Challenge Issued!",
-        description=f"{interaction.user.mention} challenges {opponent.mention} to a **Civ 5 1v1**!\n\n"
-                    f"{opponent.mention} — accept with `/accept @{interaction.user.display_name}` or ignore to decline.",
-        color=0xD4A017
-    )
-    await interaction.response.send_message(embed=embed)
-
-# ── /accept ──────────────────────────────────────────────────────────────────
-@bot.tree.command(name="accept", description="Accept a pending 1v1 challenge")
-@app_commands.describe(challenger="The player who challenged you")
-async def accept(interaction: discord.Interaction, challenger: discord.Member):
-    data = load_data()
-    key = f"{challenger.id}-{interaction.user.id}"
-
-    if key not in data.get("challenges", {}):
-        await interaction.response.send_message("❌ No pending challenge from that player.", ephemeral=True)
-        return
-
-    del data["challenges"][key]
-    save_data(data)
-
-    embed = discord.Embed(
-        title="✅  Challenge Accepted!",
-        description=f"{interaction.user.mention} has accepted {challenger.mention}'s challenge!\n\n"
-                    "🎮 **Go play your game!** When done, report results with:\n"
-                    "`/report_results @1st @2nd`",
-        color=0x4CAF50
-    )
-    await interaction.response.send_message(embed=embed)
-
 # ── /report_results ───────────────────────────────────────────────────────────
 @bot.tree.command(
     name="report_results",
-    description="Report finishing positions for a ranked game (1v1 up to 8 players)"
+    description="Report finishing positions for a ranked game (2 to 8 players in order)"
 )
 @app_commands.describe(
     first="Player who finished 1st",
     second="Player who finished 2nd",
-    third="Player who finished 3rd (optional)",
-    fourth="Player who finished 4th (optional)",
-    fifth="Player who finished 5th (optional)",
-    sixth="Player who finished 6th (optional)",
-    seventh="Player who finished 7th (optional)",
-    eighth="Player who finished 8th (optional)",
+    third="3rd place (optional)",
+    fourth="4th place (optional)",
+    fifth="5th place (optional)",
+    sixth="6th place (optional)",
+    seventh="7th place (optional)",
+    eighth="8th place (optional)",
 )
 async def report_results(
     interaction: discord.Interaction,
@@ -401,11 +379,14 @@ async def report_results(
         new_elo = new_elos[i]
         diff = new_elo - old_elo
         sign = "+" if diff >= 0 else ""
+
+        # Pull civ from player's history if available
         p["elo"] = new_elo
         if i == 0:
             p["wins"] += 1
         else:
             p["losses"] += 1
+
         result_lines.append(
             f"{medals[i]} **{info['member'].display_name}** — "
             f"{old_elo} → **{new_elo}** ({sign}{diff})  {rank_label(new_elo)}"
@@ -446,7 +427,6 @@ async def leaderboard(interaction: discord.Interaction):
         return
 
     sorted_players = sorted(players.items(), key=lambda x: x[1]["elo"], reverse=True)
-
     embed = discord.Embed(title="🌍  Civ 5 Ranked Leaderboard", color=0x8B4513)
     medals = ["🥇", "🥈", "🥉"]
     lines = []
@@ -494,7 +474,7 @@ async def profile(interaction: discord.Interaction, player: Optional[discord.Mem
     await interaction.response.send_message(embed=embed)
 
 # ── /civs ─────────────────────────────────────────────────────────────────────
-@bot.tree.command(name="civs", description="List all valid civilization names for reporting")
+@bot.tree.command(name="civs", description="List all valid civilization names")
 async def civs(interaction: discord.Interaction):
     chunks = [ALL_CIVS[i:i+10] for i in range(0, len(ALL_CIVS), 10)]
     embed = discord.Embed(title="🗺️  Valid Civilizations", color=0x2F4F4F)
