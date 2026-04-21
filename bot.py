@@ -144,12 +144,21 @@ def build_graph_html(guild_id: str) -> str:
     timeline = [{"label": "Start", **{pid: 1000 for pid in active_ids}}]
 
     sorted_matches = sorted(matches, key=lambda m: m.get("played_at", ""))
-    for i, match in enumerate(sorted_matches):
+    game_num = 0
+    for match in sorted_matches:
+        date_str = match.get("played_at", "")[:10]
+        if match.get("type") == "reset":
+            # Reset all Elos back to 1000 at this point in the timeline
+            for pid in active_ids:
+                current_elo[pid] = 1000
+            timeline.append({"label": f"RESET ({date_str})", **{pid: current_elo[pid] for pid in active_ids}})
+            game_num = 0
+            continue
+        game_num += 1
         for p in match.get("players", []):
             if p["id"] in active_ids:
                 current_elo[p["id"]] = p["elo_after"]
-        date_str = match.get("played_at", "")[:10]
-        timeline.append({"label": f"G{i+1} ({date_str})", **{pid: current_elo[pid] for pid in active_ids}})
+        timeline.append({"label": f"G{game_num} ({date_str})", **{pid: current_elo[pid] for pid in active_ids}})
 
     player_list = [
         {
@@ -754,6 +763,12 @@ async def reset_elo(interaction: discord.Interaction, password: str):
         players[uid]["losses"] = 0
         players[uid]["civs"] = {}
 
+    # Log the reset as a special match event so the graph reflects it
+    data["matches"].append({
+        "type": "reset",
+        "played_at": datetime.utcnow().isoformat()
+    })
+
     save_all_data(all_data)
 
     await interaction.response.send_message(
@@ -802,4 +817,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
