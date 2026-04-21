@@ -13,16 +13,28 @@ DATA_FILE = "ranked_data.json"
 STARTING_ELO = 1000
 K_FACTOR = 32                               # how much Elo shifts per game
 
-# All Civ 5 civs (BNW + Gods & Kings)
-ALL_CIVS = [
+# All Civ 5 civs (BNW + Gods & Kings + Lek mod)
+ALL_CIVS = sorted([
+    # Base game + DLC
     "America", "Arabia", "Assyria", "Austria", "Aztec", "Babylon", "Brazil",
     "Byzantium", "Carthage", "Celts", "China", "Denmark", "Egypt", "England",
     "Ethiopia", "France", "Germany", "Greece", "Huns", "Inca", "India",
     "Indonesia", "Iroquois", "Japan", "Korea", "Maghreb", "Maya", "Mongolia",
     "Morocco", "Netherlands", "Ottomans", "Persia", "Poland", "Polynesia",
     "Portugal", "Rome", "Russia", "Shoshone", "Siam", "Songhai", "Spain",
-    "Sweden", "Venice", "Zulu"
-]
+    "Sweden", "Venice", "Zulu",
+    # Lek mod civs
+    "Akkad", "Aksum", "Argentina", "Armenia", "Australia", "Ayyubids",
+    "Belgium", "Boers", "Bolivia", "Brunei", "Bulgaria", "Burma", "Canada",
+    "Chile", "Colombia", "Cuba", "Finland", "Franks", "Gaul", "Georgia",
+    "Golden Horde", "Goths", "Hittites", "Hungary", "Ireland", "Israel",
+    "Italy", "Jerusalem", "Khmer", "Kilwa", "Kongo", "Lithuania", "Macedonia",
+    "Madagascar", "Manchuria", "Maori", "Maurya", "Mexico", "Moors", "Mughals",
+    "Mysore", "Nabataea", "New Zealand", "Normandy", "Norway", "Nubia", "Oman",
+    "Palmyra", "Papal States", "Philippines", "Phoenicia", "Prussia", "Romania",
+    "Scotland", "Sioux", "Sumeria", "Switzerland", "Tibet", "Timurids", "Tonga",
+    "Turkey", "UAE", "Ukraine", "Vietnam", "Wales", "Yugoslavia", "Zimbabwe"
+])
 
 # ── Data helpers ─────────────────────────────────────────────────────────────
 def load_data() -> dict:
