@@ -207,48 +207,59 @@ def build_graph_html(guild_id: str) -> str:
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
   *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ background: #080a0f; color: #e2e8f0; font-family: 'IBM Plex Mono', monospace; min-height: 100vh; padding: 24px; }}
-  h1 {{ font-family: 'Cinzel', serif; font-size: 24px; color: #f97316; letter-spacing: 3px; text-shadow: 0 0 30px rgba(249,115,22,0.4); margin-bottom: 4px; }}
-  .subtitle {{ color: #475569; font-size: 11px; letter-spacing: 2px; margin-bottom: 24px; }}
-  .card {{ background: #0d1017; border: 1px solid #1e2130; border-radius: 12px; padding: 20px; margin-bottom: 20px; }}
-  .card-title {{ color: #94a3b8; font-size: 11px; letter-spacing: 2px; margin-bottom: 16px; }}
-  .player-grid {{ display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }}
-  .player-btn {{ border-radius: 8px; padding: 8px 14px; cursor: pointer; border-width: 1px; border-style: solid; background: transparent; font-family: 'IBM Plex Mono', monospace; transition: opacity 0.15s; text-align: left; }}
+  html, body {{ height: 100%; }}
+  body {{ background: #080a0f; color: #e2e8f0; font-family: 'IBM Plex Mono', monospace; height: 100vh; display: flex; flex-direction: column; padding: 16px; gap: 10px; overflow: hidden; }}
+  .topbar {{ display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }}
+  h1 {{ font-family: 'Cinzel', serif; font-size: 20px; color: #f97316; letter-spacing: 3px; text-shadow: 0 0 30px rgba(249,115,22,0.4); }}
+  .subtitle {{ color: #475569; font-size: 10px; letter-spacing: 2px; }}
+  .player-grid {{ display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }}
+  .player-btn {{ border-radius: 8px; padding: 6px 12px; cursor: pointer; border-width: 1px; border-style: solid; background: transparent; font-family: 'IBM Plex Mono', monospace; transition: opacity 0.15s; text-align: left; }}
   .player-btn.hidden {{ opacity: 0.3; }}
-  .player-name {{ font-weight: 600; font-size: 13px; }}
-  .player-elo {{ font-size: 11px; color: #64748b; margin-top: 2px; }}
-  .rank-toggle {{ display: flex; align-items: center; gap: 8px; color: #475569; font-size: 11px; cursor: pointer; margin-bottom: 16px; }}
-  .two-col {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }}
-  @media (max-width: 700px) {{ .two-col {{ grid-template-columns: 1fr; }} }}
-  canvas {{ width: 100% !important; }}
-  .footer {{ text-align: center; color: #1e2130; font-size: 10px; letter-spacing: 3px; margin-top: 16px; }}
-  .empty {{ text-align: center; color: #334155; padding: 60px; font-size: 13px; }}
+  .player-name {{ font-weight: 600; font-size: 12px; }}
+  .player-elo {{ font-size: 10px; color: #64748b; margin-top: 2px; }}
+  .rank-toggle {{ display: flex; align-items: center; gap: 6px; color: #475569; font-size: 10px; cursor: pointer; flex-shrink: 0; }}
+  .main-grid {{ display: grid; grid-template-columns: 1.4fr 1fr; grid-template-rows: 1fr 1fr; gap: 10px; flex: 1; min-height: 0; }}
+  .card {{ background: #0d1017; border: 1px solid #1e2130; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }}
+  .card-elo {{ grid-row: 1 / 3; }}
+  .card-title {{ color: #94a3b8; font-size: 10px; letter-spacing: 2px; margin-bottom: 10px; flex-shrink: 0; }}
+  .chart-wrap {{ flex: 1; min-height: 0; position: relative; }}
+  .chart-wrap canvas {{ position: absolute; inset: 0; width: 100% !important; height: 100% !important; }}
+  .lb-list {{ flex: 1; overflow-y: auto; min-height: 0; }}
+  .lb-row {{ display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #1a1f2e; }}
+  .empty {{ text-align: center; color: #334155; padding: 40px; font-size: 12px; }}
+  @media (max-width: 800px) {{
+    body {{ overflow: auto; height: auto; }}
+    .main-grid {{ grid-template-columns: 1fr; grid-template-rows: auto; }}
+    .card-elo {{ grid-row: auto; }}
+    .chart-wrap {{ height: 260px; position: relative; }}
+  }}
 </style>
 </head>
 <body>
-<h1>⚔️ CIV 5 RANKED STATS</h1>
-<p class="subtitle">LIVE DATA · REFRESH FOR LATEST</p>
-
-<div class="player-grid" id="playerGrid"></div>
-<label class="rank-toggle"><input type="checkbox" id="rankToggle" checked onchange="toggleRanks()"> SHOW RANK LINES</label>
-
-<div class="card" id="eloCard">
-  <p class="card-title">ELO PROGRESSION OVER TIME</p>
-  <canvas id="eloChart"></canvas>
+<div class="topbar">
+  <div>
+    <h1>CIV 5 RANKED STATS</h1>
+    <p class="subtitle">LIVE DATA · REFRESH FOR LATEST</p>
+  </div>
+  <label class="rank-toggle"><input type="checkbox" id="rankToggle" checked onchange="toggleRanks()"> RANK LINES</label>
 </div>
 
-<div class="two-col">
+<div class="player-grid" id="playerGrid"></div>
+
+<div class="main-grid">
+  <div class="card card-elo" id="eloCard">
+    <p class="card-title">ELO PROGRESSION OVER TIME</p>
+    <div class="chart-wrap"><canvas id="eloChart"></canvas></div>
+  </div>
   <div class="card" id="pieCard">
     <p class="card-title">MOST PLAYED CIVILIZATIONS</p>
-    <canvas id="pieChart"></canvas>
+    <div class="chart-wrap"><canvas id="pieChart"></canvas></div>
   </div>
   <div class="card" id="lbCard">
     <p class="card-title">LEADERBOARD</p>
-    <div id="lbList"></div>
+    <div class="lb-list" id="lbList"></div>
   </div>
 </div>
-
-<p class="footer">CIV 5 RANKED · CLICK PLAYERS TO TOGGLE · REFRESH FOR LATEST DATA</p>
 
 <script>
 const TIMELINE = {timeline_json};
@@ -386,7 +397,7 @@ if (!PLAYERS.length) {{
     const total = wins + losses;
     const wr = total > 0 ? Math.round(wins / total * 100) : 0;
     const row = document.createElement("div");
-    row.style.cssText = "display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #1a1f2e;";
+    row.className = "lb-row";
     row.innerHTML = `
       <span style="font-size:18px;width:28px;text-align:center">${{medals[i] || "#"+(i+1)}}</span>
       <div style="flex:1">
