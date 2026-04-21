@@ -12,6 +12,7 @@ DATA_FILE = "ranked_data.json"
 STARTING_ELO = 1000
 K_FACTOR = 32
 MAX_LOBBY_SIZE = 8
+FLOOR_ELO = 100
 
 # All Civ 5 civs (BNW + Gods & Kings + Lek mod)
 ALL_CIVS = sorted([
@@ -39,7 +40,7 @@ def load_data() -> dict:
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
             return json.load(f)
-    return {"players": {}, "lobbies": {}, "matches": []}
+    return {"players": {}, "lobbies": {}, "active_games": {}, "matches": []}
 
 def save_data(data: dict):
     with open(DATA_FILE, "w") as f:
@@ -55,33 +56,26 @@ def get_player(data: dict, user_id: str) -> dict:
         }
     return data["players"][user_id]
 
-FLOOR_ELO = 100
-
 def calc_multiplayer_elo(players: list) -> list:
     """
     Zero-sum Elo for 2-8 players.
-    Soft floor rule: if a loser is already at the floor, they give up nothing
-    and the winner gains nothing from that pairing. No Elo is created or destroyed.
+    Soft floor: if a loser is at the floor they give up nothing and the
+    winner gains nothing from that pairing. No Elo is ever created.
     """
     n = len(players)
     deltas = [0.0] * n
-
     for i in range(n):
         for j in range(n):
             if i == j:
                 continue
-
             i_beat_j = players[i]["finish"] < players[j]["finish"]
             expected_i = 1 / (1 + 10 ** ((players[j]["elo"] - players[i]["elo"]) / 400))
             k = K_FACTOR / (n - 1)
             raw_delta = k * ((1 if i_beat_j else 0) - expected_i)
-
-            # Soft floor: if j is floored and i is taking from j (i won), skip
+            # Skip: floored player can't give Elo they don't have
             if i_beat_j and players[j]["elo"] <= FLOOR_ELO:
-                continue  # j can't give Elo they don't have — i gains nothing
-
+                continue
             deltas[i] += raw_delta
-
     return [max(round(players[i]["elo"] + deltas[i]), FLOOR_ELO) for i in range(n)]
 
 def rank_label(elo: int) -> str:
@@ -92,18 +86,11 @@ def rank_label(elo: int) -> str:
     if elo >= 1000: return "🌿 Chieftain"
     return              "🪨 Settler"
 
-def build_lobby_embed(lobby: dict, status: str = "open") -> discord.Embed:
-    color = 0x4CAF50 if status == "open" else 0xD4A017
-    title = "🏛️  Game Lobby — Open" if status == "open" else "⚔️  Game Started!"
-    lines = []
-    for name, civ in zip(lobby["player_names"], lobby["player_civs"]):
-        lines.append(f"• **{name}** — {civ}")
-    embed = discord.Embed(title=title, color=color)
+def build_lobby_embed(lobby: dict) -> discord.Embed:
+    lines = [f"• **{name}** — {civ}" for name, civ in zip(lobby["player_names"], lobby["player_civs"])]
+    embed = discord.Embed(title="🏛️  Game Lobby — Open", color=0x4CAF50)
     embed.add_field(name=f"Host: {lobby['host_name']}", value="\n".join(lines) or "—", inline=False)
-    if status == "open":
-        embed.set_footer(text="Use /join_lobby @host [civ] to join • Host uses /start_game to begin")
-    else:
-        embed.set_footer(text="Game in progress — use /report_results when done, in finishing order")
+    embed.set_footer(text="Use /join_lobby @host [civ] to join • Host uses /start_game to begin")
     return embed
 
 # ── Bot setup ────────────────────────────────────────────────────────────────
@@ -121,8 +108,7 @@ async def on_ready():
 @app_commands.describe(civ="The civilization you are playing")
 async def open_lobby(interaction: discord.Interaction, civ: str):
     if civ not in ALL_CIVS:
-        await interaction.response.send_message(
-            f"❌ Unknown civ `{civ}`. Use `/civs` to see the full list.", ephemeral=True)
+        await interaction.response.send_message(f"❌ Unknown civ `{civ}`. Use `/civs` to see the full list.", ephemeral=True)
         return
 
     data = load_data()
@@ -155,14 +141,10 @@ async def open_lobby(interaction: discord.Interaction, civ: str):
 
 # ── /join_lobby ───────────────────────────────────────────────────────────────
 @bot.tree.command(name="join_lobby", description="Join an open ranked lobby")
-@app_commands.describe(
-    host="The player who opened the lobby",
-    civ="The civilization you are playing"
-)
+@app_commands.describe(host="The player who opened the lobby", civ="The civilization you are playing")
 async def join_lobby(interaction: discord.Interaction, host: discord.Member, civ: str):
     if civ not in ALL_CIVS:
-        await interaction.response.send_message(
-            f"❌ Unknown civ `{civ}`. Use `/civs` to see the full list.", ephemeral=True)
+        await interaction.response.send_message(f"❌ Unknown civ `{civ}`. Use `/civs` to see the full list.", ephemeral=True)
         return
 
     data = load_data()
@@ -191,10 +173,8 @@ async def join_lobby(interaction: discord.Interaction, host: discord.Member, civ
         await interaction.response.send_message(f"❌ Lobby is full ({MAX_LOBBY_SIZE} players max).", ephemeral=True)
         return
 
-    # Check civ not already taken
     if civ in lobby["player_civs"]:
-        await interaction.response.send_message(
-            f"❌ **{civ}** is already taken by another player in this lobby. Pick a different civ!", ephemeral=True)
+        await interaction.response.send_message(f"❌ **{civ}** is already taken. Pick a different civ!", ephemeral=True)
         return
 
     lobby["players"].append(joiner_id)
@@ -226,13 +206,12 @@ async def leave_lobby(interaction: discord.Interaction):
 
     lobby = data["lobbies"][found_lobby_id]
 
-    # If host leaves, close the whole lobby
     if leaver_id == found_lobby_id:
         del data["lobbies"][found_lobby_id]
         save_data(data)
         embed = discord.Embed(
             title="🚫  Lobby Closed",
-            description=f"{interaction.user.mention} (host) left — lobby has been closed. No Elo changes.",
+            description=f"{interaction.user.mention} (host) left — lobby closed. No Elo changes.",
             color=0x888888
         )
         await interaction.response.send_message(embed=embed)
@@ -266,6 +245,12 @@ async def start_game(interaction: discord.Interaction):
     if len(lobby["players"]) < 2:
         await interaction.response.send_message("❌ You need at least 2 players to start.", ephemeral=True)
         return
+
+    # Save civ map so /report_results can record civ stats
+    if "active_games" not in data:
+        data["active_games"] = {}
+    for pid, civ in zip(lobby["players"], lobby["player_civs"]):
+        data["active_games"][pid] = civ
 
     player_lines = "\n".join(
         f"• <@{pid}> — **{civ}**"
@@ -356,6 +341,7 @@ async def report_results(
         return
 
     data = load_data()
+    active_games = data.get("active_games", {})
 
     player_info = []
     for i, member in enumerate(members):
@@ -366,6 +352,7 @@ async def report_results(
             "finish": i + 1,
             "elo": p["elo"],
             "old_elo": p["elo"],
+            "civ": active_games.get(str(member.id))
         })
 
     new_elos = calc_multiplayer_elo(player_info)
@@ -379,25 +366,41 @@ async def report_results(
         new_elo = new_elos[i]
         diff = new_elo - old_elo
         sign = "+" if diff >= 0 else ""
-
-        # Pull civ from player's history if available
         p["elo"] = new_elo
+
+        # Record win/loss
         if i == 0:
             p["wins"] += 1
         else:
             p["losses"] += 1
 
+        # Record civ stats if civ is known
+        civ = info["civ"]
+        if civ:
+            if civ not in p["civs"]:
+                p["civs"][civ] = {"wins": 0, "losses": 0}
+            if i == 0:
+                p["civs"][civ]["wins"] += 1
+            else:
+                p["civs"][civ]["losses"] += 1
+
+        # Clean up active game entry
+        active_games.pop(info["id"], None)
+
+        civ_tag = f" ({civ})" if civ else ""
         result_lines.append(
-            f"{medals[i]} **{info['member'].display_name}** — "
+            f"{medals[i]} **{info['member'].display_name}**{civ_tag} — "
             f"{old_elo} → **{new_elo}** ({sign}{diff})  {rank_label(new_elo)}"
         )
 
+    data["active_games"] = active_games
     data["matches"].append({
         "type": f"{len(members)}-player",
         "players": [
             {
                 "id": info["id"],
                 "finish": info["finish"],
+                "civ": info["civ"],
                 "elo_before": info["old_elo"],
                 "elo_after": new_elos[i]
             }
@@ -467,9 +470,19 @@ async def profile(interaction: discord.Interaction, player: Optional[discord.Mem
 
     civs = stats.get("civs", {})
     if civs:
-        civ_lines = sorted(civs.items(), key=lambda x: x[1]["wins"] + x[1]["losses"], reverse=True)[:5]
-        civ_text = "\n".join(f"**{c}** — {v['wins']}W / {v['losses']}L" for c, v in civ_lines)
-        embed.add_field(name="🗺️  Most Played Civs", value=civ_text, inline=False)
+        # Sort by win rate (min 1 game), show top 5
+        def civ_score(item):
+            c, v = item
+            games = v["wins"] + v["losses"]
+            return v["wins"] / games if games > 0 else 0
+
+        top_civs = sorted(civs.items(), key=civ_score, reverse=True)[:5]
+        civ_text = "\n".join(
+            f"**{c}** — {v['wins']}W / {v['losses']}L "
+            f"({round(v['wins'] / (v['wins'] + v['losses']) * 100)}% WR)"
+            for c, v in top_civs
+        )
+        embed.add_field(name="🗺️  Top 5 Civs by Win Rate", value=civ_text, inline=False)
 
     await interaction.response.send_message(embed=embed)
 
