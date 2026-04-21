@@ -67,14 +67,18 @@ def save_data(data: dict):
     except IOError as e:
         print(f"❌ Failed to save data: {e}")
 
-def get_player(data: dict, user_id: str) -> dict:
+def get_player(data: dict, user_id: str, display_name: str = None) -> dict:
     if user_id not in data["players"]:
         data["players"][user_id] = {
             "elo": STARTING_ELO,
             "wins": 0,
             "losses": 0,
-            "civs": {}
+            "civs": {},
+            "name": display_name or user_id
         }
+    elif display_name:
+        # Always keep name up to date in case they change their Discord name
+        data["players"][user_id]["name"] = display_name
     return data["players"][user_id]
 
 def player_in_active_game(data: dict, user_id: str) -> bool:
@@ -158,9 +162,13 @@ def build_graph_html() -> str:
             **{pid: current_elo[pid] for pid in active_ids}
         })
 
-    # Build player name map — use Discord IDs as fallback
+    # Build player name map — use saved Discord name or fall back to Player N
     player_list = [
-        {"id": pid, "name": f"Player {i+1}", "finalElo": players.get(pid, {}).get("elo", 1000)}
+        {
+            "id": pid,
+            "name": players.get(pid, {}).get("name", f"Player {i+1}"),
+            "finalElo": players.get(pid, {}).get("elo", 1000)
+        }
         for i, pid in enumerate(sorted(active_ids, key=lambda x: players.get(x, {}).get("elo", 0), reverse=True))
     ]
 
@@ -373,6 +381,7 @@ async def open_lobby(interaction: discord.Interaction, civ: str):
         await interaction.response.send_message("⚠️ You're already in an active game. Use `/cancel_game` to cancel it first.", ephemeral=True)
         return
 
+    get_player(data, host_id, interaction.user.display_name)
     data["lobbies"][host_id] = {
         "host": host_id,
         "host_name": interaction.user.display_name,
@@ -420,6 +429,7 @@ async def join_lobby(interaction: discord.Interaction, host: discord.Member, civ
         await interaction.response.send_message(f"❌ **{civ}** is already taken. Pick a different civ!", ephemeral=True)
         return
 
+    get_player(data, joiner_id, interaction.user.display_name)
     lobby["players"].append(joiner_id)
     lobby["player_names"].append(interaction.user.display_name)
     lobby["player_civs"].append(civ)
