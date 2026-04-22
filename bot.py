@@ -13,7 +13,7 @@ from typing import Optional
 TOKEN = os.getenv("DISCORD_TOKEN")
 DATA_FILE = "ranked_data.json"
 STARTING_ELO = 1000
-K_FACTOR = 32
+K_FACTOR = 48
 MAX_LOBBY_SIZE = 8
 FLOOR_ELO = 100
 PUBLIC_URL = os.getenv("PUBLIC_URL", "").rstrip("/")
@@ -39,6 +39,15 @@ ALL_CIVS = sorted([
     "Turkey", "UAE", "Ukraine", "Vietnam", "Wales", "Yugoslavia", "Zimbabwe"
 ])
 
+
+COASTAL_CIVS = {
+    "Australia", "Brunei", "Carthage", "Chile", "Denmark", "England",
+    "Indonesia", "Japan", "Kilwa", "Korea", "Netherlands", "New Zealand",
+    "Norway", "Oman", "Philippines", "Phoenicia", "Polynesia", "Portugal",
+    "Spain", "Tonga", "Tunisia", "UAE", "Venice"
+}
+LAND_CIVS = [c for c in ALL_CIVS if c not in COASTAL_CIVS]
+DRAFT_SIZE = 5  # civs offered to each player in the draft
 # ── Data helpers ─────────────────────────────────────────────────────────────
 def load_all_data() -> dict:
     """Load the full data file. Top level is keyed by guild_id (server ID)."""
@@ -94,6 +103,47 @@ def player_in_any_lobby(data: dict, user_id: str) -> bool:
             return True
     return False
 
+
+def build_draft(players: list, map_type: str) -> dict:
+    """
+    Build a civ draft for all players.
+    map_type: "coastal", "land", or "any"
+    Each player gets DRAFT_SIZE unique civs.
+    For coastal: distribute coastal civs evenly first, fill remainder with land civs.
+    Returns {player_id: [civ1, civ2, ...]}
+    """
+    import random as _random
+    n = len(players)
+    total_needed = n * DRAFT_SIZE
+
+    coastal_list = list(COASTAL_CIVS & set(ALL_CIVS))
+    land_list = list(LAND_CIVS)
+    _random.shuffle(coastal_list)
+    _random.shuffle(land_list)
+
+    if map_type == "any":
+        pool = ALL_CIVS[:]
+        _random.shuffle(pool)
+        pool = pool[:total_needed]
+    elif map_type == "coastal":
+        # Distribute coastal evenly — at least one per player if possible
+        coastal_per_player = min(len(coastal_list) // n, DRAFT_SIZE)
+        coastal_needed = coastal_per_player * n
+        coastal_used = coastal_list[:coastal_needed]
+        land_needed = total_needed - coastal_needed
+        land_used = land_list[:land_needed]
+        pool = coastal_used + land_used
+        _random.shuffle(pool)
+    else:  # land
+        pool = land_list[:total_needed]
+        _random.shuffle(pool)
+
+    # Assign DRAFT_SIZE civs to each player
+    draft = {}
+    for i, pid in enumerate(players):
+        draft[pid] = pool[i * DRAFT_SIZE:(i + 1) * DRAFT_SIZE]
+    return draft
+
 def calc_multiplayer_elo(players: list) -> list:
     n = len(players)
     deltas = [0.0] * n
@@ -111,18 +161,19 @@ def calc_multiplayer_elo(players: list) -> list:
     return [max(round(players[i]["elo"] + deltas[i]), FLOOR_ELO) for i in range(n)]
 
 def rank_label(elo: int) -> str:
-    if elo >= 1800: return "🏆 Deity"
-    if elo >= 1600: return "⚔️  Emperor"
-    if elo >= 1400: return "🛡️  King"
-    if elo >= 1200: return "⚙️  Prince"
+    if elo >= 1600: return "🏆 Deity"
+    if elo >= 1400: return "⚔️  Emperor"
+    if elo >= 1250: return "🛡️  King"
+    if elo >= 1100: return "⚙️  Prince"
     if elo >= 1000: return "🌿 Chieftain"
     return              "🪨 Settler"
 
 def build_lobby_embed(lobby: dict) -> discord.Embed:
-    lines = [f"• **{name}** — {civ}" for name, civ in zip(lobby["player_names"], lobby["player_civs"])]
+    lines = [f"• **{name}**" for name in lobby["player_names"]]
     embed = discord.Embed(title="🏛️  Game Lobby — Open", color=0x4CAF50)
-    embed.add_field(name=f"Host: {lobby['host_name']}", value="\n".join(lines) or "—", inline=False)
-    embed.set_footer(text="Use /join_lobby @host [civ] to join • Host uses /start_game to begin")
+    embed.add_field(name=f"Host: {lobby['host_name']} · {len(lobby['players'])} player(s)",
+                    value="\n".join(lines) or "—", inline=False)
+    embed.set_footer(text="Use /join_lobby @host to join • Host uses /start_game [land/coastal/any] to begin")
     return embed
 
 def guild_id_from(interaction: discord.Interaction) -> str:
@@ -270,10 +321,10 @@ const LB_DATA = {lb_data_json};
 const PALETTE = ["#f97316","#3b82f6","#a855f7","#22c55e","#ef4444","#eab308","#06b6d4","#ec4899","#f43f5e","#10b981","#8b5cf6","#0ea5e9"];
 
 function rankLabel(elo) {{
-  if (elo>=1800) return "🏆 Deity";
-  if (elo>=1600) return "⚔️ Emperor";
-  if (elo>=1400) return "🛡️ King";
-  if (elo>=1200) return "⚙️ Prince";
+  if (elo>=1600) return "🏆 Deity";
+  if (elo>=1400) return "⚔️ Emperor";
+  if (elo>=1250) return "🛡️ King";
+  if (elo>=1100) return "⚙️ Prince";
   if (elo>=1000) return "🌿 Chieftain";
   return "🪨 Settler";
 }}
@@ -450,12 +501,7 @@ async def on_ready():
 
 # ── /open_lobby ───────────────────────────────────────────────────────────────
 @bot.tree.command(name="open_lobby", description="Open a ranked game lobby")
-@app_commands.describe(civ="The civilization you are playing")
-async def open_lobby(interaction: discord.Interaction, civ: str):
-    if civ not in ALL_CIVS:
-        await interaction.response.send_message(f"❌ Unknown civ `{civ}`. Use `/civs` to see the full list.", ephemeral=True)
-        return
-
+async def open_lobby(interaction: discord.Interaction):
     all_data = load_all_data()
     data = get_server_data(all_data, guild_id_from(interaction))
     host_id = str(interaction.user.id)
@@ -476,7 +522,6 @@ async def open_lobby(interaction: discord.Interaction, civ: str):
         "host_name": interaction.user.display_name,
         "players": [host_id],
         "player_names": [interaction.user.display_name],
-        "player_civs": [civ],
         "created_at": datetime.utcnow().isoformat()
     }
     save_all_data(all_data)
@@ -486,12 +531,8 @@ async def open_lobby(interaction: discord.Interaction, civ: str):
 
 # ── /join_lobby ───────────────────────────────────────────────────────────────
 @bot.tree.command(name="join_lobby", description="Join an open ranked lobby")
-@app_commands.describe(host="The player who opened the lobby", civ="The civilization you are playing")
-async def join_lobby(interaction: discord.Interaction, host: discord.Member, civ: str):
-    if civ not in ALL_CIVS:
-        await interaction.response.send_message(f"❌ Unknown civ `{civ}`. Use `/civs` to see the full list.", ephemeral=True)
-        return
-
+@app_commands.describe(host="The player who opened the lobby")
+async def join_lobby(interaction: discord.Interaction, host: discord.Member):
     all_data = load_all_data()
     data = get_server_data(all_data, guild_id_from(interaction))
     host_id = str(host.id)
@@ -515,14 +556,10 @@ async def join_lobby(interaction: discord.Interaction, host: discord.Member, civ
     if len(lobby["players"]) >= MAX_LOBBY_SIZE:
         await interaction.response.send_message(f"❌ Lobby is full ({MAX_LOBBY_SIZE} players max).", ephemeral=True)
         return
-    if civ in lobby["player_civs"]:
-        await interaction.response.send_message(f"❌ **{civ}** is already taken. Pick a different civ!", ephemeral=True)
-        return
 
     get_player(data, joiner_id, interaction.user.display_name)
     lobby["players"].append(joiner_id)
     lobby["player_names"].append(interaction.user.display_name)
-    lobby["player_civs"].append(civ)
     save_all_data(all_data)
 
     embed = build_lobby_embed(lobby)
@@ -561,7 +598,6 @@ async def leave_lobby(interaction: discord.Interaction):
     idx = lobby["players"].index(leaver_id)
     lobby["players"].pop(idx)
     lobby["player_names"].pop(idx)
-    lobby["player_civs"].pop(idx)
     save_all_data(all_data)
 
     embed = build_lobby_embed(lobby)
@@ -569,8 +605,15 @@ async def leave_lobby(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 # ── /start_game ───────────────────────────────────────────────────────────────
-@bot.tree.command(name="start_game", description="Start your lobby — locks it in and begins the ranked game")
-async def start_game(interaction: discord.Interaction):
+@bot.tree.command(name="start_game", description="Start your lobby and draft civs")
+@app_commands.describe(map_type="The type of map being played — affects which civs are drafted")
+@app_commands.choices(map_type=[
+    app_commands.Choice(name="Land — mostly land civs", value="land"),
+    app_commands.Choice(name="Coastal — coastal civs spread evenly, filled with land", value="coastal"),
+    app_commands.Choice(name="Any — all civs in the pool", value="any"),
+    app_commands.Choice(name="Skip draft — pick civs manually later", value="skip"),
+])
+async def start_game(interaction: discord.Interaction, map_type: str = "any"):
     all_data = load_all_data()
     data = get_server_data(all_data, guild_id_from(interaction))
     host_id = str(interaction.user.id)
@@ -586,29 +629,152 @@ async def start_game(interaction: discord.Interaction):
         return
 
     game_id = host_id
-    for pid, civ in zip(lobby["players"], lobby["player_civs"]):
-        data["active_games"][pid] = {"civ": civ, "game_id": game_id}
+
+    if map_type == "skip":
+        # No draft — move straight to active game, civs will be None until reported
+        for pid in lobby["players"]:
+            data["active_games"][pid] = {"civ": None, "game_id": game_id}
+        data["game_groups"][game_id] = {
+            "players": lobby["players"],
+            "player_names": lobby["player_names"],
+            "player_civs": [None] * len(lobby["players"]),
+            "draft": None,
+            "picks": {},
+        }
+        del data["lobbies"][host_id]
+        save_all_data(all_data)
+
+        mentions = " ".join(f"<@{pid}>" for pid in lobby["players"])
+        embed = discord.Embed(
+            title=f"⚔️  {len(lobby['players'])}-Player Ranked Game Started!",
+            description=f"Players: {mentions}\n\nDraft skipped — pick your civs in-game.\nWhen done, report finishing order with:\n`/report_results @1st @2nd @3rd ...`",
+            color=0xD4A017
+        )
+        embed.set_footer(text=f"Started by {interaction.user.display_name}")
+        await interaction.response.send_message(embed=embed)
+        return
+
+    # Build draft
+    draft = build_draft(lobby["players"], map_type)
+
+    for pid in lobby["players"]:
+        data["active_games"][pid] = {"civ": None, "game_id": game_id}
     data["game_groups"][game_id] = {
         "players": lobby["players"],
         "player_names": lobby["player_names"],
-        "player_civs": lobby["player_civs"],
+        "player_civs": [None] * len(lobby["players"]),
+        "draft": draft,
+        "picks": {},  # pid -> chosen civ
     }
-
-    player_lines = "\n".join(
-        f"• <@{pid}> — **{civ}**"
-        for pid, civ in zip(lobby["players"], lobby["player_civs"])
-    )
 
     del data["lobbies"][host_id]
     save_all_data(all_data)
 
+    map_label = {"land": "Land", "coastal": "Coastal", "any": "Any"}.get(map_type, "Any")
+
+    # Build draft display — one field per player
     embed = discord.Embed(
-        title=f"⚔️  {len(lobby['players'])}-Player Ranked Game Started!",
-        description=f"{player_lines}\n\nWhen the game ends, the host reports finishing order with:\n`/report_results @1st @2nd @3rd ...`",
+        title=f"⚔️  {len(lobby['players'])}-Player Game — Civ Draft ({map_label})",
+        description="Each player use `/pick_civ [civ]` to choose from your options below.\nAll players must pick before the game begins.",
         color=0xD4A017
     )
+    for pid, name in zip(lobby["players"], lobby["player_names"]):
+        civs_list = " · ".join(f"`{c}`" for c in draft[pid])
+        embed.add_field(name=f"{name}", value=civs_list, inline=False)
+
     embed.set_footer(text=f"Started by {interaction.user.display_name}")
     await interaction.response.send_message(embed=embed)
+
+
+# ── /pick_civ ─────────────────────────────────────────────────────────────────
+@bot.tree.command(name="pick_civ", description="Pick your civilization from your draft options")
+@app_commands.describe(civ="The civilization you want to play (must be in your draft)")
+async def pick_civ(interaction: discord.Interaction, civ: str):
+    all_data = load_all_data()
+    data = get_server_data(all_data, guild_id_from(interaction))
+    caller_id = str(interaction.user.id)
+
+    # Must be in an active game with a draft
+    if caller_id not in data.get("active_games", {}):
+        await interaction.response.send_message("❌ You're not in an active game.", ephemeral=True)
+        return
+
+    game_entry = data["active_games"][caller_id]
+    game_id = game_entry.get("game_id") if isinstance(game_entry, dict) else None
+    group = data.get("game_groups", {}).get(game_id)
+
+    if not group or not group.get("draft"):
+        await interaction.response.send_message("❌ This game has no draft — civs are being picked in-game.", ephemeral=True)
+        return
+
+    draft = group["draft"]
+    picks = group.get("picks", {})
+
+    # Check player is in this game
+    if caller_id not in group["players"]:
+        await interaction.response.send_message("❌ You're not in this game.", ephemeral=True)
+        return
+
+    # Already picked
+    if caller_id in picks:
+        await interaction.response.send_message(f"⚠️ You already picked **{picks[caller_id]}**.", ephemeral=True)
+        return
+
+    # Must pick from their own draft
+    player_draft = draft.get(caller_id, [])
+    if civ not in player_draft:
+        options = " · ".join(f"`{c}`" for c in player_draft)
+        await interaction.response.send_message(
+            f"❌ **{civ}** is not in your draft. Your options are:\n{options}", ephemeral=True)
+        return
+
+    # Check civ not already picked by someone else
+    if civ in picks.values():
+        await interaction.response.send_message(f"❌ **{civ}** has already been picked by another player.", ephemeral=True)
+        return
+
+    # Record pick
+    picks[caller_id] = civ
+    group["picks"] = picks
+
+    # Update active_games civ
+    data["active_games"][caller_id]["civ"] = civ
+
+    # Update player_civs in group
+    idx = group["players"].index(caller_id)
+    group["player_civs"][idx] = civ
+
+    # Check if all players have picked
+    all_picked = all(pid in picks for pid in group["players"])
+
+    save_all_data(all_data)
+
+    if all_picked:
+        # All done — show final lineup
+        lines = "\n".join(
+            f"• **{group['player_names'][i]}** — **{group['player_civs'][i]}**"
+            for i in range(len(group["players"]))
+        )
+        embed = discord.Embed(
+            title="✅  All Civs Picked — Game On!",
+            description=f"{lines}\n\nGo play! When done, the host reports with:\n`/report_results @1st @2nd @3rd ...`",
+            color=0x4CAF50
+        )
+        await interaction.response.send_message(embed=embed)
+    else:
+        # Show who still needs to pick
+        waiting = [
+            group["player_names"][i]
+            for i, pid in enumerate(group["players"])
+            if pid not in picks
+        ]
+        caller_name = interaction.user.display_name
+        embed = discord.Embed(
+            title=f"✅  {caller_name} picked {civ}",
+            description=f"Still waiting for: {', '.join(waiting)}",
+            color=0x4CAF50
+        )
+        await interaction.response.send_message(embed=embed)
 
 # ── /cancel_game ─────────────────────────────────────────────────────────────
 @bot.tree.command(name="cancel_game", description="Cancel your open lobby or active game — no Elo changes")
