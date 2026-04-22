@@ -411,6 +411,7 @@ if (!PLAYERS.length) {{
       }},
       options: {{
         responsive: true,
+        maintainAspectRatio: false,
         plugins: {{
           legend: {{
             position: "right",
