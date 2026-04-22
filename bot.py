@@ -232,14 +232,43 @@ def build_graph_html(guild_id: str) -> str:
     pie_labels = [c for c, _ in top_civs]
     pie_values = [v for _, v in top_civs]
 
-    # Build leaderboard data (wins/losses per player)
-    lb_data = {
-        pid: {
-            "wins": players.get(pid, {}).get("wins", 0),
-            "losses": players.get(pid, {}).get("losses", 0),
+    # Build per-player profile data
+    lb_data = {}
+    for pid in active_ids:
+        p = players.get(pid, {})
+        civs = p.get("civs", {})
+        # Top 5 civs by win rate
+        def civ_wr(item):
+            v = item[1]
+            g = v["wins"] + v["losses"]
+            return v["wins"] / g if g > 0 else 0
+        top_p_civs = sorted(civs.items(), key=civ_wr, reverse=True)[:5]
+
+        # Count coastal vs land games
+        coastal_games = 0
+        land_games = 0
+        for m in sorted_matches:
+            if m.get("type") in ("reset", None):
+                continue
+            for mp in m.get("players", []):
+                if mp["id"] == pid and mp.get("civ"):
+                    civ_name = mp["civ"]
+                    from_coastal = civ_name in ["Australia","Brunei","Carthage","Chile","Denmark",
+                        "England","Indonesia","Japan","Kilwa","Korea","Netherlands","New Zealand",
+                        "Norway","Oman","Philippines","Phoenicia","Polynesia","Portugal","Spain",
+                        "Tonga","Tunisia","UAE","Venice"]
+                    if from_coastal:
+                        coastal_games += 1
+                    else:
+                        land_games += 1
+
+        lb_data[pid] = {
+            "wins": p.get("wins", 0),
+            "losses": p.get("losses", 0),
+            "top_civs": [{"civ": c, "wins": v["wins"], "losses": v["losses"]} for c, v in top_p_civs],
+            "coastal_games": coastal_games,
+            "land_games": land_games,
         }
-        for pid in active_ids
-    }
 
     import json as _json
     timeline_json = _json.dumps(timeline)
@@ -266,6 +295,7 @@ def build_graph_html(guild_id: str) -> str:
   .player-grid {{ display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; overflow: hidden; max-height: 72px; }}
   .player-btn {{ border-radius: 8px; padding: 6px 12px; cursor: pointer; border-width: 1px; border-style: solid; background: transparent; font-family: 'IBM Plex Mono', monospace; transition: opacity 0.15s; text-align: left; }}
   .player-btn.hidden {{ opacity: 0.3; }}
+  .player-btn.profile-active {{ opacity: 1; box-shadow: 0 0 0 2px currentColor; }}
   .player-name {{ font-weight: 600; font-size: 12px; }}
   .player-elo {{ font-size: 10px; color: #64748b; margin-top: 2px; }}
   .rank-toggle {{ display: flex; align-items: center; gap: 6px; color: #475569; font-size: 10px; cursor: pointer; flex-shrink: 0; }}
@@ -349,6 +379,7 @@ if (!PLAYERS.length) {{
     data: {{ labels, datasets }},
     options: {{
       responsive: true,
+      maintainAspectRatio: false,
       interaction: {{ mode: "index", intersect: false }},
       plugins: {{
         legend: {{ display: false }},
@@ -378,13 +409,20 @@ if (!PLAYERS.length) {{
     btn.style.color = color;
     btn.innerHTML = `<div class="player-name">${{medals[i] || "#"+(i+1)}} ${{p.name}}</div><div class="player-elo">${{p.finalElo}} Elo · ${{rankLabel(p.finalElo)}}</div>`;
     btn.onclick = () => {{
-      const ds = eloChart.data.datasets[i];
-      if (hidden.has(p.id)) {{
-        hidden.delete(p.id); ds.borderWidth = 2.5; ds.pointRadius = 4; btn.classList.remove("hidden");
+      if (activeProfile === p.id) {{
+        // clicking same player — close profile, show leaderboard
+        activeProfile = null;
+        btn.classList.remove("profile-active");
+        showLeaderboard();
       }} else {{
-        hidden.add(p.id); ds.borderWidth = 0; ds.pointRadius = 0; btn.classList.add("hidden");
+        // switch to this player's profile
+        if (activeProfile !== null) {{
+          document.querySelectorAll(".player-btn").forEach(b => b.classList.remove("profile-active"));
+        }}
+        activeProfile = p.id;
+        btn.classList.add("profile-active");
+        showProfile(p, i);
       }}
-      eloChart.update();
     }};
     grid.appendChild(btn);
   }});
@@ -392,6 +430,86 @@ if (!PLAYERS.length) {{
   function toggleRanks() {{
     eloChart.options.scales.y.min = document.getElementById("rankToggle").checked ? 800 : undefined;
     eloChart.update();
+  }}
+
+  // ── Profile / Leaderboard panel switcher ─────────────────────────────────────
+  let activeProfile = null;
+  const lbCard = document.getElementById("lbCard");
+
+  function showLeaderboard() {{
+    lbCard.innerHTML = `<p class="card-title">LEADERBOARD</p><div class="lb-list" id="lbList"></div>`;
+    buildLeaderboard();
+  }}
+
+  function showProfile(p, idx) {{
+    const color = PALETTE[idx % PALETTE.length];
+    const d = LB_DATA[p.id] || {{}};
+    const wins = d.wins || 0;
+    const losses = d.losses || 0;
+    const total = wins + losses;
+    const wr = total > 0 ? Math.round(wins / total * 100) : 0;
+    const coastal = d.coastal_games || 0;
+    const land = d.land_games || 0;
+    const mapTotal = coastal + land;
+    const coastalPct = mapTotal > 0 ? Math.round(coastal / mapTotal * 100) : 0;
+    const topCivs = d.top_civs || [];
+
+    const civRows = topCivs.length > 0
+      ? topCivs.map(c => {{
+          const g = c.wins + c.losses;
+          const cwr = g > 0 ? Math.round(c.wins / g * 100) : 0;
+          return `<div class="lb-row">
+            <div style="flex:1;font-size:11px;color:#e2e8f0">${{c.civ}}</div>
+            <div style="font-size:10px;color:#475569">${{c.wins}}W/${{c.losses}}L · ${{cwr}}%</div>
+          </div>`;
+        }}).join("")
+      : `<div style="color:#334155;font-size:11px;padding:8px 0">No civ data yet</div>`;
+
+    lbCard.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-shrink:0;margin-bottom:10px">
+        <p class="card-title" style="margin:0">PLAYER PROFILE</p>
+        <span style="font-size:10px;color:#475569;cursor:pointer" onclick="closeProfile()">[close]</span>
+      </div>
+      <div style="flex:1;overflow-y:auto;min-height:0">
+        <div style="font-weight:700;font-size:16px;color:${{color}};margin-bottom:2px">${{p.name}}</div>
+        <div style="font-size:11px;color:#94a3b8;margin-bottom:14px">${{rankLabel(p.finalElo)}} · ${{p.finalElo}} Elo</div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">
+          <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
+            <div style="font-size:18px;font-weight:700;color:#e2e8f0">${{wins}}</div>
+            <div style="font-size:9px;color:#475569;margin-top:2px">WINS</div>
+          </div>
+          <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
+            <div style="font-size:18px;font-weight:700;color:#e2e8f0">${{losses}}</div>
+            <div style="font-size:9px;color:#475569;margin-top:2px">LOSSES</div>
+          </div>
+          <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
+            <div style="font-size:18px;font-weight:700;color:${{color}}">${{wr}}%</div>
+            <div style="font-size:9px;color:#475569;margin-top:2px">WIN RATE</div>
+          </div>
+        </div>
+
+        <div style="font-size:10px;color:#64748b;letter-spacing:1px;margin-bottom:6px">MAP PREFERENCE</div>
+        <div style="display:flex;gap:8px;margin-bottom:14px">
+          <div style="flex:1;background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
+            <div style="font-size:14px;font-weight:700;color:#06b6d4">${{coastal}}</div>
+            <div style="font-size:9px;color:#475569;margin-top:2px">COASTAL (${{coastalPct}}%)</div>
+          </div>
+          <div style="flex:1;background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
+            <div style="font-size:14px;font-weight:700;color:#22c55e">${{land}}</div>
+            <div style="font-size:9px;color:#475569;margin-top:2px">LAND (${{100 - coastalPct}}%)</div>
+          </div>
+        </div>
+
+        <div style="font-size:10px;color:#64748b;letter-spacing:1px;margin-bottom:6px">TOP CIVS BY WIN RATE</div>
+        ${{civRows}}
+      </div>`;
+  }}
+
+  function closeProfile() {{
+    activeProfile = null;
+    document.querySelectorAll(".player-btn").forEach(b => b.classList.remove("profile-active"));
+    showLeaderboard();
   }}
 
   // ── Pie chart ───────────────────────────────────────────────────────────────
@@ -439,29 +557,41 @@ if (!PLAYERS.length) {{
   }}
 
   // ── Leaderboard ─────────────────────────────────────────────────────────────
-  const lbList = document.getElementById("lbList");
-  const medals = ["🥇","🥈","🥉"];
-  PLAYERS.forEach((p, i) => {{
-    const color = PALETTE[i % PALETTE.length];
-    const wins = LB_DATA[p.id]?.wins || 0;
-    const losses = LB_DATA[p.id]?.losses || 0;
-    const total = wins + losses;
-    const wr = total > 0 ? Math.round(wins / total * 100) : 0;
-    const row = document.createElement("div");
-    row.className = "lb-row";
-    row.innerHTML = `
-      <span style="font-size:18px;width:28px;text-align:center">${{medals[i] || "#"+(i+1)}}</span>
-      <div style="flex:1">
-        <div style="font-weight:600;font-size:13px;color:${{color}}">${{p.name}}</div>
-        <div style="font-size:10px;color:#475569;margin-top:3px">${{wins}}W / ${{losses}}L · ${{wr}}% WR</div>
-      </div>
-      <div style="text-align:right">
-        <div style="font-weight:700;font-size:14px;color:#e2e8f0">${{p.finalElo}}</div>
-        <div style="font-size:10px;color:#475569;margin-top:2px">${{rankLabel(p.finalElo)}}</div>
-      </div>
-    `;
-    lbList.appendChild(row);
-  }});
+  function buildLeaderboard() {{
+    const lbList = document.getElementById("lbList");
+    if (!lbList) return;
+    const lbMedals = ["🥇","🥈","🥉"];
+    PLAYERS.forEach((p, i) => {{
+      const color = PALETTE[i % PALETTE.length];
+      const wins = LB_DATA[p.id]?.wins || 0;
+      const losses = LB_DATA[p.id]?.losses || 0;
+      const total = wins + losses;
+      const wr = total > 0 ? Math.round(wins / total * 100) : 0;
+      const row = document.createElement("div");
+      row.className = "lb-row";
+      row.style.cursor = "pointer";
+      row.innerHTML = `
+        <span style="font-size:18px;width:28px;text-align:center">${{lbMedals[i] || "#"+(i+1)}}</span>
+        <div style="flex:1">
+          <div style="font-weight:600;font-size:13px;color:${{color}}">${{p.name}}</div>
+          <div style="font-size:10px;color:#475569;margin-top:3px">${{wins}}W / ${{losses}}L · ${{wr}}% WR</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-weight:700;font-size:14px;color:#e2e8f0">${{p.finalElo}}</div>
+          <div style="font-size:10px;color:#475569;margin-top:2px">${{rankLabel(p.finalElo)}}</div>
+        </div>
+      `;
+      row.onclick = () => {{
+        activeProfile = p.id;
+        document.querySelectorAll(".player-btn").forEach(b => b.classList.remove("profile-active"));
+        const btn = document.querySelectorAll(".player-btn")[i];
+        if (btn) btn.classList.add("profile-active");
+        showProfile(p, i);
+      }};
+      lbList.appendChild(row);
+    }});
+  }}
+  buildLeaderboard();
 }}
 </script>
 </body>
