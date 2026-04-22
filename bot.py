@@ -269,11 +269,11 @@ def build_graph_html(guild_id: str) -> str:
   .player-name {{ font-weight: 600; font-size: 12px; }}
   .player-elo {{ font-size: 10px; color: #64748b; margin-top: 2px; }}
   .rank-toggle {{ display: flex; align-items: center; gap: 6px; color: #475569; font-size: 10px; cursor: pointer; flex-shrink: 0; }}
-  .main-grid {{ display: grid; grid-template-columns: 1.4fr 1fr; grid-template-rows: 1fr 1fr; gap: 10px; flex: 1; min-height: 0; }}
+  .main-grid {{ display: grid; grid-template-columns: 1.4fr 1fr; grid-template-rows: 1fr 1fr; gap: 10px; flex: 1; min-height: 0; max-height: calc(100vh - 120px); }}
   .card {{ background: #0d1017; border: 1px solid #1e2130; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }}
   .card-elo {{ grid-row: 1 / 3; }}
   .card-title {{ color: #94a3b8; font-size: 10px; letter-spacing: 2px; margin-bottom: 10px; flex-shrink: 0; }}
-  .chart-wrap {{ flex: 1; min-height: 0; position: relative; }}
+  .chart-wrap {{ flex: 1; min-height: 0; max-height: 100%; position: relative; overflow: hidden; }}
   .chart-wrap canvas {{ position: absolute; inset: 0; width: 100% !important; height: 100% !important; }}
   .lb-list {{ flex: 1; overflow-y: auto; min-height: 0; }}
   .lb-row {{ display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #1a1f2e; }}
