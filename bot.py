@@ -233,34 +233,56 @@ def build_graph_html(guild_id: str) -> str:
     pie_values = [v for _, v in top_civs]
 
     # Build per-player profile data
+    COASTAL_SET = {"Australia","Brunei","Carthage","Chile","Denmark","England",
+        "Indonesia","Japan","Kilwa","Korea","Netherlands","New Zealand",
+        "Norway","Oman","Philippines","Phoenicia","Polynesia","Portugal","Spain",
+        "Tonga","Tunisia","UAE","Venice"}
+
     lb_data = {}
     for pid in active_ids:
         p = players.get(pid, {})
         civs = p.get("civs", {})
-        # Top 5 civs by win rate
+
         def civ_wr(item):
             v = item[1]
             g = v["wins"] + v["losses"]
             return v["wins"] / g if g > 0 else 0
         top_p_civs = sorted(civs.items(), key=civ_wr, reverse=True)[:5]
 
-        # Count coastal vs land games
         coastal_games = 0
         land_games = 0
+        peak_elo = 1000
+        big_game_win = False
+        played_8 = False
+        unique_civs = set()
+        win_civs = set()
+
         for m in sorted_matches:
             if m.get("type") in ("reset", None):
                 continue
-            for mp in m.get("players", []):
-                if mp["id"] == pid and mp.get("civ"):
-                    civ_name = mp["civ"]
-                    from_coastal = civ_name in ["Australia","Brunei","Carthage","Chile","Denmark",
-                        "England","Indonesia","Japan","Kilwa","Korea","Netherlands","New Zealand",
-                        "Norway","Oman","Philippines","Phoenicia","Polynesia","Portugal","Spain",
-                        "Tonga","Tunisia","UAE","Venice"]
-                    if from_coastal:
-                        coastal_games += 1
-                    else:
-                        land_games += 1
+            game_players = m.get("players", [])
+            game_size = len(game_players)
+            for mp in game_players:
+                if mp["id"] == pid:
+                    civ_name = mp.get("civ")
+                    finish = mp.get("finish", 99)
+                    elo_after = mp.get("elo_after", 1000)
+
+                    if civ_name:
+                        unique_civs.add(civ_name)
+                        if finish == 1:
+                            win_civs.add(civ_name)
+                        if civ_name in COASTAL_SET:
+                            coastal_games += 1
+                        else:
+                            land_games += 1
+
+                    if elo_after > peak_elo:
+                        peak_elo = elo_after
+                    if finish == 1 and game_size >= 6:
+                        big_game_win = True
+                    if game_size >= 8:
+                        played_8 = True
 
         lb_data[pid] = {
             "wins": p.get("wins", 0),
@@ -268,6 +290,11 @@ def build_graph_html(guild_id: str) -> str:
             "top_civs": [{"civ": c, "wins": v["wins"], "losses": v["losses"]} for c, v in top_p_civs],
             "coastal_games": coastal_games,
             "land_games": land_games,
+            "unique_civs": len(unique_civs),
+            "win_civs": len(win_civs),
+            "peak_elo": peak_elo,
+            "big_game_win": big_game_win,
+            "played_8": played_8,
         }
 
     import json as _json
@@ -302,6 +329,7 @@ def build_graph_html(guild_id: str) -> str:
   .main-grid {{ display: grid; grid-template-columns: 1.4fr 1fr; grid-template-rows: 1fr 1fr; gap: 10px; flex: 1; overflow: hidden; min-height: 0; }}
   .card {{ background: #0d1017; border: 1px solid #1e2130; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }}
   .card-elo {{ grid-row: 1 / 3; }}
+  .card-profile {{ grid-column: 2; grid-row: 1 / 3; }}
   .card-title {{ color: #94a3b8; font-size: 10px; letter-spacing: 2px; margin-bottom: 10px; flex-shrink: 0; }}
   .chart-wrap {{ flex: 1; position: relative; overflow: hidden; min-height: 0; }}
   .chart-wrap canvas {{ position: absolute; top: 0; left: 0; width: 100% !important; height: 100% !important; }}
@@ -338,6 +366,9 @@ def build_graph_html(guild_id: str) -> str:
   <div class="card" id="lbCard">
     <p class="card-title">LEADERBOARD</p>
     <div class="lb-list" id="lbList"></div>
+  </div>
+  <div class="card" id="profileCard" style="display:none;grid-column:2;grid-row:1/3;overflow:hidden;">
+    <div style="flex:1;overflow-y:auto;min-height:0;" id="profileContent"></div>
   </div>
 </div>
 
@@ -410,15 +441,11 @@ if (!PLAYERS.length) {{
     btn.innerHTML = `<div class="player-name">${{medals[i] || "#"+(i+1)}} ${{p.name}}</div><div class="player-elo">${{p.finalElo}} Elo · ${{rankLabel(p.finalElo)}}</div>`;
     btn.onclick = () => {{
       if (activeProfile === p.id) {{
-        // clicking same player — close profile, show leaderboard
         activeProfile = null;
         btn.classList.remove("profile-active");
-        showLeaderboard();
+        hideProfile();
       }} else {{
-        // switch to this player's profile
-        if (activeProfile !== null) {{
-          document.querySelectorAll(".player-btn").forEach(b => b.classList.remove("profile-active"));
-        }}
+        document.querySelectorAll(".player-btn").forEach(b => b.classList.remove("profile-active"));
         activeProfile = p.id;
         btn.classList.add("profile-active");
         showProfile(p, i);
@@ -435,10 +462,33 @@ if (!PLAYERS.length) {{
   // ── Profile / Leaderboard panel switcher ─────────────────────────────────────
   let activeProfile = null;
   const lbCard = document.getElementById("lbCard");
+  const pieCard = document.getElementById("pieCard");
+  const profileCard = document.getElementById("profileCard");
+  const profileContent = document.getElementById("profileContent");
+
+  const ACHIEVEMENTS = [
+    {{id:"civ10",    icon:"🗺️",  name:"Explorer",          desc:"Play 10 different civs",    check: d => d.unique_civs >= 10}},
+    {{id:"civ20",    icon:"🌍",  name:"World Traveller",   desc:"Play 20 different civs",    check: d => d.unique_civs >= 20}},
+    {{id:"winciv5",  icon:"⚔️",  name:"Tactician",         desc:"Win with 5 different civs", check: d => d.win_civs >= 5}},
+    {{id:"winciv10", icon:"🏛️",  name:"Polymath",          desc:"Win with 10 different civs",check: d => d.win_civs >= 10}},
+    {{id:"coastal",  icon:"⛵",  name:"Sea Dog",           desc:"Play a coastal game",       check: d => d.coastal_games >= 1}},
+    {{id:"land",     icon:"🏕️",  name:"Landlubber",        desc:"Play a land game",          check: d => d.land_games >= 1}},
+    {{id:"prince",   icon:"⚙️",  name:"Prince",            desc:"Reach Prince rank",         check: d => d.peak_elo >= 1100}},
+    {{id:"king",     icon:"🛡️",  name:"King",              desc:"Reach King rank",           check: d => d.peak_elo >= 1250}},
+    {{id:"emperor",  icon:"⚔️",  name:"Emperor",           desc:"Reach Emperor rank",        check: d => d.peak_elo >= 1400}},
+    {{id:"deity",    icon:"🏆",  name:"Deity",             desc:"Reach Deity rank",          check: d => d.peak_elo >= 1600}},
+    {{id:"big6",     icon:"👥",  name:"Grand Victor",      desc:"Win a 6+ player game",      check: d => d.big_game_win}},
+    {{id:"full8",    icon:"🎖️",  name:"Full House",        desc:"Play in an 8-player game",  check: d => d.played_8}},
+  ];
+
+  function hideProfile() {{
+    profileCard.style.display = "none";
+    pieCard.style.display = "flex";
+    lbCard.style.display = "flex";
+  }}
 
   function showLeaderboard() {{
-    lbCard.innerHTML = `<p class="card-title">LEADERBOARD</p><div class="lb-list" id="lbList"></div>`;
-    buildLeaderboard();
+    hideProfile();
   }}
 
   function showProfile(p, idx) {{
@@ -465,51 +515,70 @@ if (!PLAYERS.length) {{
         }}).join("")
       : `<div style="color:#334155;font-size:11px;padding:8px 0">No civ data yet</div>`;
 
-    lbCard.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-shrink:0;margin-bottom:10px">
-        <p class="card-title" style="margin:0">PLAYER PROFILE</p>
-        <span style="font-size:10px;color:#475569;cursor:pointer" onclick="closeProfile()">[close]</span>
-      </div>
-      <div style="flex:1;overflow-y:auto;min-height:0">
-        <div style="font-weight:700;font-size:16px;color:${{color}};margin-bottom:2px">${{p.name}}</div>
-        <div style="font-size:11px;color:#94a3b8;margin-bottom:14px">${{rankLabel(p.finalElo)}} · ${{p.finalElo}} Elo</div>
-
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:14px">
-          <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
-            <div style="font-size:18px;font-weight:700;color:#e2e8f0">${{wins}}</div>
-            <div style="font-size:9px;color:#475569;margin-top:2px">WINS</div>
-          </div>
-          <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
-            <div style="font-size:18px;font-weight:700;color:#e2e8f0">${{losses}}</div>
-            <div style="font-size:9px;color:#475569;margin-top:2px">LOSSES</div>
-          </div>
-          <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
-            <div style="font-size:18px;font-weight:700;color:${{color}}">${{wr}}%</div>
-            <div style="font-size:9px;color:#475569;margin-top:2px">WIN RATE</div>
-          </div>
+    const achRows = ACHIEVEMENTS.map(a => {{
+      const unlocked = a.check(d);
+      return `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #1a1f2e;opacity:${{unlocked ? 1 : 0.3}}">
+        <span style="font-size:18px;width:24px;text-align:center">${{a.icon}}</span>
+        <div style="flex:1">
+          <div style="font-size:11px;font-weight:600;color:${{unlocked ? "#e2e8f0" : "#475569"}}">${{a.name}}</div>
+          <div style="font-size:9px;color:#475569;margin-top:1px">${{a.desc}}</div>
         </div>
-
-        <div style="font-size:10px;color:#64748b;letter-spacing:1px;margin-bottom:6px">MAP PREFERENCE</div>
-        <div style="display:flex;gap:8px;margin-bottom:14px">
-          <div style="flex:1;background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
-            <div style="font-size:14px;font-weight:700;color:#06b6d4">${{coastal}}</div>
-            <div style="font-size:9px;color:#475569;margin-top:2px">COASTAL (${{coastalPct}}%)</div>
-          </div>
-          <div style="flex:1;background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
-            <div style="font-size:14px;font-weight:700;color:#22c55e">${{land}}</div>
-            <div style="font-size:9px;color:#475569;margin-top:2px">LAND (${{100 - coastalPct}}%)</div>
-          </div>
-        </div>
-
-        <div style="font-size:10px;color:#64748b;letter-spacing:1px;margin-bottom:6px">TOP CIVS BY WIN RATE</div>
-        ${{civRows}}
+        <span style="font-size:11px;color:${{unlocked ? "#f97316" : "#1e2130"}}">${{unlocked ? "✓" : "○"}}</span>
       </div>`;
+    }}).join("");
+
+    profileContent.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-shrink:0">
+        <div>
+          <div style="font-weight:700;font-size:16px;color:${{color}}">${{p.name}}</div>
+          <div style="font-size:11px;color:#94a3b8;margin-top:2px">${{rankLabel(p.finalElo)}} · ${{p.finalElo}} Elo</div>
+        </div>
+        <span style="font-size:10px;color:#475569;cursor:pointer;padding:4px 8px;border:1px solid #1e2130;border-radius:6px" onclick="closeProfile()">✕ close</span>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:14px">
+        <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
+          <div style="font-size:18px;font-weight:700;color:#e2e8f0">${{wins}}</div>
+          <div style="font-size:9px;color:#475569;margin-top:2px">WINS</div>
+        </div>
+        <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
+          <div style="font-size:18px;font-weight:700;color:#e2e8f0">${{losses}}</div>
+          <div style="font-size:9px;color:#475569;margin-top:2px">LOSSES</div>
+        </div>
+        <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
+          <div style="font-size:18px;font-weight:700;color:${{color}}">${{wr}}%</div>
+          <div style="font-size:9px;color:#475569;margin-top:2px">WIN RATE</div>
+        </div>
+      </div>
+
+      <div style="font-size:10px;color:#64748b;letter-spacing:1px;margin-bottom:6px">MAP PREFERENCE</div>
+      <div style="display:flex;gap:6px;margin-bottom:14px">
+        <div style="flex:1;background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
+          <div style="font-size:14px;font-weight:700;color:#06b6d4">${{coastal}}</div>
+          <div style="font-size:9px;color:#475569;margin-top:2px">COASTAL (${{coastalPct}}%)</div>
+        </div>
+        <div style="flex:1;background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
+          <div style="font-size:14px;font-weight:700;color:#22c55e">${{land}}</div>
+          <div style="font-size:9px;color:#475569;margin-top:2px">LAND (${{100 - coastalPct}}%)</div>
+        </div>
+      </div>
+
+      <div style="font-size:10px;color:#64748b;letter-spacing:1px;margin-bottom:6px">TOP CIVS BY WIN RATE</div>
+      ${{civRows}}
+
+      <div style="font-size:10px;color:#64748b;letter-spacing:1px;margin:14px 0 6px">ACHIEVEMENTS (${{ACHIEVEMENTS.filter(a => a.check(d)).length}}/${{ACHIEVEMENTS.length}})</div>
+      ${{achRows}}
+    `;
+
+    pieCard.style.display = "none";
+    lbCard.style.display = "none";
+    profileCard.style.display = "flex";
   }}
 
   function closeProfile() {{
     activeProfile = null;
     document.querySelectorAll(".player-btn").forEach(b => b.classList.remove("profile-active"));
-    showLeaderboard();
+    hideProfile();
   }}
 
   // ── Pie chart ───────────────────────────────────────────────────────────────
@@ -582,11 +651,17 @@ if (!PLAYERS.length) {{
         </div>
       `;
       row.onclick = () => {{
-        activeProfile = p.id;
-        document.querySelectorAll(".player-btn").forEach(b => b.classList.remove("profile-active"));
-        const btn = document.querySelectorAll(".player-btn")[i];
-        if (btn) btn.classList.add("profile-active");
-        showProfile(p, i);
+        if (activeProfile === p.id) {{
+          activeProfile = null;
+          document.querySelectorAll(".player-btn").forEach(b => b.classList.remove("profile-active"));
+          hideProfile();
+        }} else {{
+          activeProfile = p.id;
+          document.querySelectorAll(".player-btn").forEach(b => b.classList.remove("profile-active"));
+          const btns = document.querySelectorAll(".player-btn");
+          if (btns[i]) btns[i].classList.add("profile-active");
+          showProfile(p, i);
+        }}
       }};
       lbList.appendChild(row);
     }});
