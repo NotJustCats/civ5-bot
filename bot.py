@@ -258,31 +258,30 @@ def build_graph_html(guild_id: str) -> str:
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
   *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  html, body {{ height: 100%; }}
-  body {{ background: #080a0f; color: #e2e8f0; font-family: 'IBM Plex Mono', monospace; height: 100vh; display: flex; flex-direction: column; padding: 16px; gap: 10px; overflow: hidden; }}
-  .topbar {{ display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }}
+  html, body {{ height: 100%; overflow: hidden; }}
+  body {{ background: #080a0f; color: #e2e8f0; font-family: 'IBM Plex Mono', monospace; height: 100vh; display: flex; flex-direction: column; padding: 16px; gap: 10px; }}
+  .topbar {{ display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; height: 40px; }}
   h1 {{ font-family: 'Cinzel', serif; font-size: 20px; color: #f97316; letter-spacing: 3px; text-shadow: 0 0 30px rgba(249,115,22,0.4); }}
   .subtitle {{ color: #475569; font-size: 10px; letter-spacing: 2px; }}
-  .player-grid {{ display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }}
+  .player-grid {{ display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; overflow: hidden; max-height: 72px; }}
   .player-btn {{ border-radius: 8px; padding: 6px 12px; cursor: pointer; border-width: 1px; border-style: solid; background: transparent; font-family: 'IBM Plex Mono', monospace; transition: opacity 0.15s; text-align: left; }}
   .player-btn.hidden {{ opacity: 0.3; }}
   .player-name {{ font-weight: 600; font-size: 12px; }}
   .player-elo {{ font-size: 10px; color: #64748b; margin-top: 2px; }}
   .rank-toggle {{ display: flex; align-items: center; gap: 6px; color: #475569; font-size: 10px; cursor: pointer; flex-shrink: 0; }}
-  .main-grid {{ display: grid; grid-template-columns: 1.4fr 1fr; grid-template-rows: 1fr 1fr; gap: 10px; flex: 1; min-height: 0; max-height: calc(100vh - 120px); }}
-  .card {{ background: #0d1017; border: 1px solid #1e2130; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }}
+  .main-grid {{ display: grid; grid-template-columns: 1.4fr 1fr; grid-template-rows: 1fr 1fr; gap: 10px; flex: 1; overflow: hidden; min-height: 0; }}
+  .card {{ background: #0d1017; border: 1px solid #1e2130; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }}
   .card-elo {{ grid-row: 1 / 3; }}
   .card-title {{ color: #94a3b8; font-size: 10px; letter-spacing: 2px; margin-bottom: 10px; flex-shrink: 0; }}
-  .chart-wrap {{ flex: 1; min-height: 0; max-height: 100%; position: relative; overflow: hidden; }}
-  .chart-wrap canvas {{ position: absolute; inset: 0; width: 100% !important; height: 100% !important; }}
+  .chart-wrap {{ flex: 1; position: relative; overflow: hidden; min-height: 0; }}
+  .chart-wrap canvas {{ position: absolute; top: 0; left: 0; width: 100% !important; height: 100% !important; }}
   .lb-list {{ flex: 1; overflow-y: auto; min-height: 0; }}
   .lb-row {{ display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #1a1f2e; }}
   .empty {{ text-align: center; color: #334155; padding: 40px; font-size: 12px; }}
   @media (max-width: 800px) {{
-    body {{ overflow: auto; height: auto; }}
-    .main-grid {{ grid-template-columns: 1fr; grid-template-rows: auto; }}
+    html, body {{ overflow: auto; height: auto; }}
+    .main-grid {{ grid-template-columns: 1fr; grid-template-rows: 400px 300px 300px; overflow: visible; }}
     .card-elo {{ grid-row: auto; }}
-    .chart-wrap {{ height: 260px; position: relative; }}
   }}
 </style>
 </head>
