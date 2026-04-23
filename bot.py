@@ -5,7 +5,10 @@ import json
 import os
 import tempfile
 import asyncio
-from aiohttp import web
+import secrets
+import hashlib
+import hmac
+from aiohttp import web, ClientSession
 from datetime import datetime
 from typing import Optional
 
@@ -17,6 +20,10 @@ K_FACTOR = 48
 MAX_LOBBY_SIZE = 8
 FLOOR_ELO = 100
 PUBLIC_URL = os.getenv("PUBLIC_URL", "").rstrip("/")
+DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
+DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
+COOKIE_SECRET = os.getenv("COOKIE_SECRET", secrets.token_hex(32))
+OAUTH_SCOPES = "identify"
 
 # All Civ 5 civs (BNW + Gods & Kings + Lek mod)
 ALL_CIVS = sorted([
@@ -55,6 +62,23 @@ def normalise_civ(name: str) -> str | None:
         if civ.lower() == name.lower():
             return civ
     return None
+
+# ── Session helpers ──────────────────────────────────────────────────────────
+def make_session_token(user_id: str, username: str) -> str:
+    payload = f"{user_id}:{username}"
+    sig = hmac.new(COOKIE_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}:{sig}"
+
+def verify_session_token(token: str):
+    try:
+        parts = token.split(":")
+        if len(parts) != 3: return None, None
+        user_id, username, sig = parts
+        expected = hmac.new(COOKIE_SECRET.encode(), f"{user_id}:{username}".encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected): return None, None
+        return user_id, username
+    except Exception:
+        return None, None
 
 # ── Data helpers ─────────────────────────────────────────────────────────────
 def load_all_data() -> dict:
@@ -189,7 +213,7 @@ def guild_id_from(interaction: discord.Interaction) -> str:
     return str(interaction.guild_id)
 
 # ── Web server ────────────────────────────────────────────────────────────────
-def build_graph_html(guild_id: str) -> str:
+def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: str = None) -> str:
     all_data = load_all_data()
     data = all_data.get(guild_id, {"players": {}, "matches": [], "active_games": {}, "game_groups": {}, "lobbies": {}})
     matches = data.get("matches", [])
@@ -376,6 +400,8 @@ def build_graph_html(guild_id: str) -> str:
     history_json = _json.dumps(history)
     live_games_json = _json.dumps(live_games)
     match_index_json = _json.dumps(match_index)
+    logged_in_id_json = _json.dumps(logged_in_id or "")
+    logged_in_name_json = _json.dumps(logged_in_name or "")
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -446,6 +472,7 @@ def build_graph_html(guild_id: str) -> str:
 <body>
 <div class="topbar">
   <div><h1>CIV 5 RANKED</h1><p class="subtitle">LIVE DATA · REFRESH FOR LATEST</p></div>
+  <div id="authArea"></div>
 </div>
 
 <div class="tabs">
@@ -498,6 +525,8 @@ const LB_DATA = {lb_data_json};
 const HISTORY = {history_json};
 const LIVE_GAMES = {live_games_json};
 const MATCH_INDEX = {match_index_json};
+const LOGGED_IN_ID = {logged_in_id_json};
+const LOGGED_IN_NAME = {logged_in_name_json};
 const PALETTE = ["#f97316","#3b82f6","#a855f7","#22c55e","#ef4444","#eab308","#06b6d4","#ec4899","#f43f5e","#10b981","#8b5cf6","#0ea5e9"];
 
 const ACHIEVEMENTS = [
@@ -820,6 +849,31 @@ function toggleGame(id) {{
   body.classList.toggle("open");
   chev.classList.toggle("open");
 }}
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+const authArea = document.getElementById("authArea");
+if (LOGGED_IN_ID && LOGGED_IN_NAME) {{
+  authArea.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px">
+      <span style="font-size:11px;color:#94a3b8">👤 ${{LOGGED_IN_NAME}}</span>
+      <a href="/logout" style="font-size:10px;color:#475569;text-decoration:none;padding:4px 10px;border:1px solid #1e2130;border-radius:6px">logout</a>
+    </div>`;
+
+  // Auto-open this player's profile
+  const myIdx = PLAYERS.findIndex(p => p.id === LOGGED_IN_ID);
+  if (myIdx >= 0) {{
+    setTimeout(() => {{
+      document.querySelectorAll(".player-btn").forEach(b => b.classList.remove("profile-active"));
+      const btns = document.querySelectorAll(".player-btn");
+      if (btns[myIdx]) btns[myIdx].classList.add("profile-active");
+      activeProfile = PLAYERS[myIdx].id;
+      showProfile(PLAYERS[myIdx], myIdx);
+    }}, 200);
+  }}
+}} else {{
+  const guild = new URLSearchParams(window.location.search).get("guild") || "";
+  authArea.innerHTML = `<a href="/login?guild=${{guild}}" style="font-size:11px;color:#f97316;text-decoration:none;padding:5px 12px;border:1px solid #f97316;border-radius:6px;transition:opacity 0.15s" onmouseover="this.style.opacity=0.7" onmouseout="this.style.opacity=1">Login with Discord</a>`;
+}}
 </script>
 </body>
 </html>"""
@@ -829,8 +883,63 @@ async def handle_graph(request):
     guild_id = request.query.get("guild")
     if not guild_id:
         return web.Response(text="<h2>Missing ?guild= parameter</h2>", content_type="text/html", status=400)
-    html = build_graph_html(guild_id)
+    # Read session cookie
+    session_token = request.cookies.get("session")
+    logged_in_id = logged_in_name = None
+    if session_token:
+        logged_in_id, logged_in_name = verify_session_token(session_token)
+    html = build_graph_html(guild_id, logged_in_id, logged_in_name)
     return web.Response(text=html, content_type="text/html")
+
+async def handle_login(request):
+    guild_id = request.query.get("guild", "")
+    if not DISCORD_CLIENT_ID:
+        return web.Response(text="OAuth not configured — set DISCORD_CLIENT_ID and DISCORD_CLIENT_SECRET.", status=500)
+    redirect_uri = f"{PUBLIC_URL}/callback"
+    state = f"{guild_id}:{secrets.token_urlsafe(16)}"
+    url = (
+        f"https://discord.com/oauth2/authorize"
+        f"?client_id={DISCORD_CLIENT_ID}"
+        f"&redirect_uri={redirect_uri}"
+        f"&response_type=code"
+        f"&scope={OAUTH_SCOPES}"
+        f"&state={state}"
+    )
+    return web.HTTPFound(url)
+
+async def handle_callback(request):
+    code = request.query.get("code")
+    state = request.query.get("state", ":")
+    guild_id = state.split(":")[0]
+    if not code:
+        return web.Response(text="OAuth error — no code returned.", status=400)
+    redirect_uri = f"{PUBLIC_URL}/callback"
+    # Exchange code for token
+    async with ClientSession() as session:
+        async with session.post("https://discord.com/api/oauth2/token", data={{
+            "client_id": DISCORD_CLIENT_ID,
+            "client_secret": DISCORD_CLIENT_SECRET,
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+        }}) as resp:
+            token_data = await resp.json()
+        access_token = token_data.get("access_token")
+        if not access_token:
+            return web.Response(text="OAuth error — could not get access token.", status=400)
+        async with session.get("https://discord.com/api/users/@me", headers={{"Authorization": f"Bearer {{access_token}}"}}) as resp:
+            user_data = await resp.json()
+    user_id = user_data.get("id", "")
+    username = user_data.get("username", "unknown")
+    session_token = make_session_token(user_id, username)
+    response = web.HTTPFound(f"/graph?guild={{guild_id}}")
+    response.set_cookie("session", session_token, max_age=60*60*24*30, httponly=True, samesite="Lax")
+    return response
+
+async def handle_logout(request):
+    response = web.HTTPFound(request.headers.get("Referer", "/"))
+    response.del_cookie("session")
+    return response
 
 async def handle_data(request):
     all_data = load_all_data()
@@ -839,6 +948,9 @@ async def handle_data(request):
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/graph", handle_graph)
+    app.router.add_get("/login", handle_login)
+    app.router.add_get("/callback", handle_callback)
+    app.router.add_get("/logout", handle_logout)
     app.router.add_get("/data", handle_data)
     runner = web.AppRunner(app)
     await runner.setup()
