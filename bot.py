@@ -557,26 +557,57 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
   .civ-option.picked {{ border-color: #22c55e; color: #22c55e; background: #0c2010; }}
   .finish-row {{ display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }}
   .finish-medal {{ font-size: 18px; width: 28px; text-align: center; flex-shrink: 0; }}
-  /* Civilopedia tiles */
-  .civ-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; padding-bottom: 8px; }}
-  .civ-tile {{ background: #0d1017; border: 1px solid #1e2130; border-radius: 10px; padding: 12px; cursor: pointer; transition: all 0.15s; position: relative; overflow: hidden; }}
-  .civ-tile:hover {{ border-color: #2a3040; transform: translateY(-1px); }}
-  .civ-tile.expanded {{ border-color: #f97316; grid-column: 1 / -1; }}
-  .civ-tile-map {{ font-size: 16px; margin-bottom: 6px; }}
-  .civ-tile-name {{ font-family: 'Cinzel', serif; font-size: 11px; font-weight: 700; color: #e2e8f0; margin-bottom: 2px; line-height: 1.3; }}
-  .civ-tile-leader {{ font-size: 9px; color: #475569; margin-bottom: 6px; }}
-  .civ-tile-tags {{ display: flex; flex-wrap: wrap; gap: 3px; }}
-  .civ-tile-tag {{ font-size: 8px; padding: 1px 5px; border-radius: 4px; }}
-  .civ-tile-played {{ position: absolute; top: 8px; right: 8px; font-size: 8px; color: #f97316; font-weight: 700; }}
+  /* Civilopedia grid — 5 per row */
+  .civ-grid {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; padding-bottom: 12px; }}
+  /* 3D tilt card — playing card ratio 5:7 */
+  .civ-tile {{
+    background: #0d1017; border: 1px solid #1e2130; border-radius: 12px; padding: 16px 14px;
+    cursor: pointer; position: relative; overflow: hidden;
+    aspect-ratio: 5 / 7; display: flex; flex-direction: column;
+    transform-style: preserve-3d; transform: perspective(600px) rotateX(0deg) rotateY(0deg);
+    transition: transform 0.08s ease, border-color 0.2s, box-shadow 0.2s;
+    will-change: transform;
+  }}
+  .civ-tile:hover {{ border-color: #2a3040; box-shadow: 0 16px 48px rgba(0,0,0,0.5); }}
+  .civ-tile.expanded {{
+    border-color: #f97316; grid-column: 1 / -1;
+    aspect-ratio: unset;
+    transform: perspective(600px) rotateX(0deg) rotateY(0deg) !important;
+    box-shadow: 0 0 0 1px #f97316;
+  }}
+  /* Shine layers */
+  .civ-tile-shine {{
+    position: absolute; inset: 0; border-radius: 14px; pointer-events: none; opacity: 0;
+    transition: opacity 0.2s;
+    /* layer 1: soft mouse-following radial glow */
+    /* layer 2: streak — set dynamically via JS */
+    background:
+      radial-gradient(circle at 50% 50%, rgba(255,255,255,0.07) 0%, transparent 60%),
+      linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.04) 50%, transparent 70%);
+  }}
+  .civ-tile:hover .civ-tile-shine {{ opacity: 1; }}
+  /* Border shimmer on hover */
+  .civ-tile:hover {{
+    border-color: rgba(255,255,255,0.12);
+  }}
+  /* Card content */
+  .civ-tile-top {{ display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; }}
+  .civ-tile-map {{ font-size: 28px; line-height: 1; }}
+  .civ-tile-played {{ font-size: 9px; color: #f97316; font-weight: 700; background: #1a0f00; border: 1px solid #f9731644; border-radius: 6px; padding: 2px 6px; }}
+  .civ-tile-name {{ font-family: 'Cinzel', serif; font-size: 14px; font-weight: 700; color: #e2e8f0; margin-bottom: 3px; line-height: 1.2; }}
+  .civ-tile-leader {{ font-size: 10px; color: #475569; margin-bottom: 10px; letter-spacing: 1px; }}
+  .civ-tile-ability {{ font-size: 10px; color: #94a3b8; font-style: italic; margin-bottom: 10px; line-height: 1.4; padding: 6px 8px; background: #080a0f; border-radius: 6px; border-left: 2px solid #f97316; }}
+  .civ-tile-tags {{ display: flex; flex-wrap: wrap; gap: 4px; }}
+  .civ-tile-tag {{ font-size: 9px; padding: 2px 7px; border-radius: 5px; }}
   /* Expanded detail */
-  .civ-detail {{ display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid #1e2130; }}
+  .civ-detail {{ display: none; margin-top: 16px; padding-top: 16px; border-top: 1px solid #1e2130; }}
   .civ-tile.expanded .civ-detail {{ display: block; }}
-  .civ-detail-header {{ display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; gap: 12px; }}
-  .civ-detail-title {{ font-family: 'Cinzel', serif; font-size: 16px; font-weight: 700; color: #e2e8f0; }}
+  .civ-detail-header {{ display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; gap: 12px; }}
+  .civ-detail-title {{ font-family: 'Cinzel', serif; font-size: 18px; font-weight: 700; color: #e2e8f0; }}
   .civ-detail-leader {{ font-size: 10px; color: #64748b; margin-top: 3px; }}
-  .civ-detail-stats {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }}
-  .civ-detail-stat {{ background: #080a0f; border: 1px solid #1e2130; border-radius: 8px; padding: 6px 10px; text-align: center; flex: 1; min-width: 60px; }}
-  .civ-detail-stat-val {{ font-size: 13px; font-weight: 700; color: #f97316; }}
+  .civ-detail-stats {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }}
+  .civ-detail-stat {{ background: #080a0f; border: 1px solid #1e2130; border-radius: 8px; padding: 8px 12px; text-align: center; flex: 1; min-width: 60px; }}
+  .civ-detail-stat-val {{ font-size: 14px; font-weight: 700; color: #f97316; }}
   .civ-detail-stat-label {{ font-size: 8px; color: #475569; margin-top: 1px; letter-spacing: 1px; }}
   .civ-section {{ margin-bottom: 10px; padding: 12px; background: #080a0f; border: 1px solid #1e2130; border-radius: 8px; }}
   .civ-section-type {{ font-size: 9px; letter-spacing: 2px; margin-bottom: 3px; }}
@@ -1313,6 +1344,66 @@ function buildCivDetail(name) {{
 
 let expandedCiv = null;
 
+// ── 3D tilt + specular shine effect ─────────────────────────────────────────
+function addTilt(tile) {{
+  const shine = tile.querySelector(".civ-tile-shine");
+
+  tile.addEventListener("mousemove", (e) => {{
+    if (tile.classList.contains("expanded")) return;
+    const rect = tile.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    // Normalised -1 to 1
+    const dx = (e.clientX - cx) / (rect.width / 2);
+    const dy = (e.clientY - cy) / (rect.height / 2);
+    const rotX = -dy * 12;
+    const rotY =  dx * 12;
+
+    tile.style.transform = `perspective(700px) rotateX(${{rotX}}deg) rotateY(${{rotY}}deg) scale(1.04)`;
+
+    if (shine) {{
+      // Mouse position as percentage within card (0-100)
+      const px = ((e.clientX - rect.left) / rect.width * 100).toFixed(1);
+      const py = ((e.clientY - rect.top) / rect.height * 100).toFixed(1);
+
+      // Streak angle mirrors the tilt: as card tilts right the streak moves left-to-right
+      // Angle in degrees: 90 when flat, shifts with dx/dy
+      const streakAngle = (90 + rotY * 1.5 - rotX * 0.5).toFixed(1);
+
+      // Streak position: opposite to mouse (light source is off-screen in the tilt direction)
+      const streakPos = (50 - dx * 35).toFixed(1);
+
+      shine.style.background = [
+        // 1. Soft radial glow centred on mouse — like a torch
+        `radial-gradient(ellipse 80% 60% at ${{px}}% ${{py}}%, rgba(255,255,255,0.09) 0%, transparent 70%)`,
+        // 2. Narrow bright streak — the specular highlight
+        `linear-gradient(${{streakAngle}}deg,
+          transparent ${{(+streakPos - 22).toFixed(1)}}%,
+          rgba(255,255,255,0.04) ${{(+streakPos - 8).toFixed(1)}}%,
+          rgba(255,255,255,0.11) ${{(+streakPos - 1).toFixed(1)}}%,
+          rgba(255,255,255,0.13) ${{streakPos}}%,
+          rgba(255,255,255,0.11) ${{(+streakPos + 1).toFixed(1)}}%,
+          rgba(255,255,255,0.04) ${{(+streakPos + 8).toFixed(1)}}%,
+          transparent ${{(+streakPos + 22).toFixed(1)}}%)`,
+        // 3. Edge rim light — subtle border glow on the lit side
+        `radial-gradient(ellipse 120% 120% at ${{(50 - dx * 60).toFixed(1)}}% ${{(50 - dy * 60).toFixed(1)}}%, rgba(255,255,255,0.05) 0%, transparent 55%)`,
+      ].join(",");
+    }}
+  }});
+
+  tile.addEventListener("mouseleave", () => {{
+    tile.style.transform = "perspective(700px) rotateX(0deg) rotateY(0deg) scale(1)";
+    tile.style.transition = "transform 0.4s ease, border-color 0.2s, box-shadow 0.2s";
+    if (shine) shine.style.background = "";
+    // Reset transition after snap-back
+    setTimeout(() => {{ tile.style.transition = "transform 0.08s ease, border-color 0.2s, box-shadow 0.2s"; }}, 400);
+  }});
+
+  tile.addEventListener("mouseenter", () => {{
+    tile.style.transition = "transform 0.08s ease, border-color 0.2s, box-shadow 0.2s";
+  }});
+}}
+
 function buildCivGrid(filter) {{
   const grid = document.getElementById("civGrid");
   if (!grid) return;
@@ -1336,51 +1427,40 @@ function buildCivGrid(filter) {{
       ...improvements.map(i => `<span class="civ-tile-tag" style="background:#0c2010;color:#22c55e">🔧 ${{i.name}}</span>`),
     ].join("");
 
-    const playedBadge = stats.played > 0 ? `<div class="civ-tile-played">${{stats.wins}}W/${{stats.played}}G</div>` : "";
+    const playedBadge = stats.played > 0
+      ? `<span class="civ-tile-played">${{stats.wins}}W / ${{stats.played}}G</span>`
+      : "";
 
     const tile = document.createElement("div");
     tile.className = "civ-tile";
     tile.id = "civ-tile-" + name.replace(/\s+/g,'_');
     tile.innerHTML = `
-      ${{playedBadge}}
-      <div class="civ-tile-map">${{isCoastal?"⛵":"🏕️"}}</div>
+      <div class="civ-tile-shine"></div>
+      <div class="civ-tile-top">
+        <div class="civ-tile-map">${{isCoastal?"⛵":"🏕️"}}</div>
+        ${{playedBadge}}
+      </div>
       <div class="civ-tile-name">${{name}}</div>
       <div class="civ-tile-leader">${{civ.leader}}</div>
-      ${{ability ? `<div style="font-size:9px;color:#64748b;margin-bottom:6px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${{ability.name}}</div>` : ""}}
+      ${{ability ? `<div class="civ-tile-ability">⚡ ${{ability.name}}</div>` : ""}}
       <div class="civ-tile-tags">${{tags}}</div>
       <div class="civ-detail">${{buildCivDetail(name)}}</div>`;
 
-    tile.querySelector(".civ-tile-map").onclick =
-    tile.querySelector(".civ-tile-name").onclick =
-    tile.querySelector(".civ-tile-leader").onclick = (ev) => {{
-      ev.stopPropagation();
+    tile.onclick = (ev) => {{
+      if (ev.target.closest(".civ-detail")) return;
       toggleCiv(name);
     }};
-    if (tile.querySelector(".civ-tile-tags")) {{
-      tile.querySelector(".civ-tile-tags").onclick = (ev) => {{
-        ev.stopPropagation();
-        toggleCiv(name);
-      }};
-    }}
-    const abilityEl = tile.querySelector("[style*='line-clamp']");
-    if (abilityEl) abilityEl.onclick = (ev) => {{ ev.stopPropagation(); toggleCiv(name); }};
 
+    addTilt(tile);
     grid.appendChild(tile);
-    // Re-expand if this was the expanded one
     if (expandedCiv === name) tile.classList.add("expanded");
   }});
 }}
 
 function toggleCiv(name) {{
-  if (expandedCiv === name) {{
-    expandedCiv = null;
-  }} else {{
-    expandedCiv = name;
-  }}
-  // Re-render to move expanded tile to correct position
+  expandedCiv = expandedCiv === name ? null : name;
   const searchVal = document.getElementById("civSearch")?.value || "";
   buildCivGrid(searchVal);
-  // Scroll expanded tile into view
   if (expandedCiv) {{
     setTimeout(() => {{
       const el = document.getElementById("civ-tile-" + expandedCiv.replace(/\s+/g,'_'));
@@ -1397,14 +1477,10 @@ function collapseCiv(event) {{
 }}
 
 function onCivSearch(val) {{
-  const box = document.getElementById("civSuggestions");
-  box.style.display = "none";
   buildCivGrid(val);
 }}
 
-function showAllSuggestions() {{
-  // Don't show dropdown on focus — grid is already visible
-}}
+function showAllSuggestions() {{}}
 
 // Close suggestions when clicking outside
 document.addEventListener("click", e => {{
