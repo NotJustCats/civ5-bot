@@ -48,6 +48,14 @@ COASTAL_CIVS = {
 }
 LAND_CIVS = [c for c in ALL_CIVS if c not in COASTAL_CIVS]
 DRAFT_SIZE = 5  # civs offered to each player in the draft
+def normalise_civ(name: str) -> str | None:
+    """Match a civ name case-insensitively. Returns the correctly-cased name or None."""
+    name = name.strip()
+    for civ in ALL_CIVS:
+        if civ.lower() == name.lower():
+            return civ
+    return None
+
 # ── Data helpers ─────────────────────────────────────────────────────────────
 def load_all_data() -> dict:
     """Load the full data file. Top level is keyed by guild_id (server ID)."""
@@ -170,8 +178,9 @@ def rank_label(elo: int) -> str:
 
 def build_lobby_embed(lobby: dict) -> discord.Embed:
     lines = [f"• **{name}**" for name in lobby["player_names"]]
+    difficulty = lobby.get("difficulty", "Prince")
     embed = discord.Embed(title="🏛️  Game Lobby — Open", color=0x4CAF50)
-    embed.add_field(name=f"Host: {lobby['host_name']} · {len(lobby['players'])} player(s)",
+    embed.add_field(name=f"Host: {lobby['host_name']} · {len(lobby['players'])} player(s) · {difficulty} difficulty",
                     value="\n".join(lines) or "—", inline=False)
     embed.set_footer(text="Use /join_lobby @host to join • Host uses /start_game [land/coastal/any] to begin")
     return embed
@@ -284,6 +293,23 @@ def build_graph_html(guild_id: str) -> str:
                     if game_size >= 8:
                         played_8 = True
 
+        # Count victory types and difficulty wins
+        victory_counts = {"Domination": 0, "Science": 0, "Culture": 0, "Diplomatic": 0}
+        difficulty_wins = {"Prince": 0, "King": 0}
+
+        for m in sorted_matches:
+            if m.get("type") in ("reset", None):
+                continue
+            game_players = m.get("players", [])
+            winner_id = next((mp["id"] for mp in game_players if mp.get("finish") == 1), None)
+            if winner_id == pid:
+                vtype = m.get("victory_type")
+                diff = m.get("difficulty", "Prince")
+                if vtype in victory_counts:
+                    victory_counts[vtype] += 1
+                if diff in difficulty_wins:
+                    difficulty_wins[diff] += 1
+
         lb_data[pid] = {
             "wins": p.get("wins", 0),
             "losses": p.get("losses", 0),
@@ -295,6 +321,8 @@ def build_graph_html(guild_id: str) -> str:
             "peak_elo": peak_elo,
             "big_game_win": big_game_win,
             "played_8": played_8,
+            "victory_counts": victory_counts,
+            "difficulty_wins": difficulty_wins,
         }
 
     import json as _json
@@ -467,18 +495,41 @@ if (!PLAYERS.length) {{
   const profileContent = document.getElementById("profileContent");
 
   const ACHIEVEMENTS = [
-    {{id:"civ10",    icon:"🗺️",  name:"Explorer",          desc:"Play 10 different civs",    check: d => d.unique_civs >= 10}},
-    {{id:"civ20",    icon:"🌍",  name:"World Traveller",   desc:"Play 20 different civs",    check: d => d.unique_civs >= 20}},
-    {{id:"winciv5",  icon:"⚔️",  name:"Tactician",         desc:"Win with 5 different civs", check: d => d.win_civs >= 5}},
-    {{id:"winciv10", icon:"🏛️",  name:"Polymath",          desc:"Win with 10 different civs",check: d => d.win_civs >= 10}},
-    {{id:"coastal",  icon:"⛵",  name:"Sea Dog",           desc:"Play a coastal game",       check: d => d.coastal_games >= 1}},
-    {{id:"land",     icon:"🏕️",  name:"Landlubber",        desc:"Play a land game",          check: d => d.land_games >= 1}},
-    {{id:"prince",   icon:"⚙️",  name:"Prince",            desc:"Reach Prince rank",         check: d => d.peak_elo >= 1100}},
-    {{id:"king",     icon:"🛡️",  name:"King",              desc:"Reach King rank",           check: d => d.peak_elo >= 1250}},
-    {{id:"emperor",  icon:"⚔️",  name:"Emperor",           desc:"Reach Emperor rank",        check: d => d.peak_elo >= 1400}},
-    {{id:"deity",    icon:"🏆",  name:"Deity",             desc:"Reach Deity rank",          check: d => d.peak_elo >= 1600}},
-    {{id:"big6",     icon:"👥",  name:"Grand Victor",      desc:"Win a 6+ player game",      check: d => d.big_game_win}},
-    {{id:"full8",    icon:"🎖️",  name:"Full House",        desc:"Play in an 8-player game",  check: d => d.played_8}},
+    // Civ variety
+    {{id:"civ10",    icon:"🗺️",  name:"Explorer",          desc:"Play 10 different civs",         check: d => d.unique_civs >= 10}},
+    {{id:"civ20",    icon:"🌍",  name:"World Traveller",   desc:"Play 20 different civs",         check: d => d.unique_civs >= 20}},
+    {{id:"winciv5",  icon:"⚔️",  name:"Tactician",         desc:"Win with 5 different civs",      check: d => d.win_civs >= 5}},
+    {{id:"winciv10", icon:"🏛️",  name:"Polymath",          desc:"Win with 10 different civs",     check: d => d.win_civs >= 10}},
+    // Map type
+    {{id:"coastal",  icon:"⛵",  name:"Sea Dog",            desc:"Play a coastal game",            check: d => d.coastal_games >= 1}},
+    {{id:"land",     icon:"🏕️",  name:"Landlubber",         desc:"Play a land game",               check: d => d.land_games >= 1}},
+    // Rank milestones
+    {{id:"rprince",  icon:"⚙️",  name:"Prince",             desc:"Reach Prince rank",              check: d => d.peak_elo >= 1100}},
+    {{id:"rking",    icon:"🛡️",  name:"King",               desc:"Reach King rank",                check: d => d.peak_elo >= 1250}},
+    {{id:"remperor", icon:"⚔️",  name:"Emperor",            desc:"Reach Emperor rank",             check: d => d.peak_elo >= 1400}},
+    {{id:"rdeity",   icon:"🏆",  name:"Deity",              desc:"Reach Deity rank",               check: d => d.peak_elo >= 1600}},
+    // Difficulty wins
+    {{id:"dprince",  icon:"👑",  name:"Prince",             desc:"Win a game on Prince difficulty", check: d => (d.difficulty_wins?.Prince || 0) >= 1}},
+    {{id:"dking",    icon:"🏰",  name:"King",               desc:"Win a game on King difficulty",   check: d => (d.difficulty_wins?.King || 0) >= 1}},
+    // Domination victories
+    {{id:"dom1",     icon:"⚔️",  name:"Domination I",       desc:"Win 1 Domination victory",       check: d => (d.victory_counts?.Domination || 0) >= 1}},
+    {{id:"dom5",     icon:"⚔️",  name:"Domination V",       desc:"Win 5 Domination victories",     check: d => (d.victory_counts?.Domination || 0) >= 5}},
+    {{id:"dom10",    icon:"⚔️",  name:"Domination X",       desc:"Win 10 Domination victories",    check: d => (d.victory_counts?.Domination || 0) >= 10}},
+    // Science victories
+    {{id:"sci1",     icon:"🚀",  name:"Science I",          desc:"Win 1 Science victory",          check: d => (d.victory_counts?.Science || 0) >= 1}},
+    {{id:"sci5",     icon:"🚀",  name:"Science V",          desc:"Win 5 Science victories",        check: d => (d.victory_counts?.Science || 0) >= 5}},
+    {{id:"sci10",    icon:"🚀",  name:"Science X",          desc:"Win 10 Science victories",       check: d => (d.victory_counts?.Science || 0) >= 10}},
+    // Culture victories
+    {{id:"cul1",     icon:"🎭",  name:"Culture I",          desc:"Win 1 Culture victory",          check: d => (d.victory_counts?.Culture || 0) >= 1}},
+    {{id:"cul5",     icon:"🎭",  name:"Culture V",          desc:"Win 5 Culture victories",        check: d => (d.victory_counts?.Culture || 0) >= 5}},
+    {{id:"cul10",    icon:"🎭",  name:"Culture X",          desc:"Win 10 Culture victories",       check: d => (d.victory_counts?.Culture || 0) >= 10}},
+    // Diplomatic victories
+    {{id:"dip1",     icon:"🕊️",  name:"Diplomatic I",       desc:"Win 1 Diplomatic victory",      check: d => (d.victory_counts?.Diplomatic || 0) >= 1}},
+    {{id:"dip5",     icon:"🕊️",  name:"Diplomatic V",       desc:"Win 5 Diplomatic victories",    check: d => (d.victory_counts?.Diplomatic || 0) >= 5}},
+    {{id:"dip10",    icon:"🕊️",  name:"Diplomatic X",       desc:"Win 10 Diplomatic victories",   check: d => (d.victory_counts?.Diplomatic || 0) >= 10}},
+    // Game size
+    {{id:"big6",     icon:"👥",  name:"Grand Victor",       desc:"Win a 6+ player game",           check: d => d.big_game_win}},
+    {{id:"full8",    icon:"🎖️",  name:"Full House",         desc:"Play in an 8-player game",       check: d => d.played_8}},
   ];
 
   function hideProfile() {{
@@ -706,7 +757,12 @@ async def on_ready():
 
 # ── /open_lobby ───────────────────────────────────────────────────────────────
 @bot.tree.command(name="open_lobby", description="Open a ranked game lobby")
-async def open_lobby(interaction: discord.Interaction):
+@app_commands.describe(difficulty="The AI difficulty level being played")
+@app_commands.choices(difficulty=[
+    app_commands.Choice(name="Prince", value="Prince"),
+    app_commands.Choice(name="King",   value="King"),
+])
+async def open_lobby(interaction: discord.Interaction, difficulty: str = "Prince"):
     all_data = load_all_data()
     data = get_server_data(all_data, guild_id_from(interaction))
     host_id = str(interaction.user.id)
@@ -727,6 +783,7 @@ async def open_lobby(interaction: discord.Interaction):
         "host_name": interaction.user.display_name,
         "players": [host_id],
         "player_names": [interaction.user.display_name],
+        "difficulty": difficulty,
         "created_at": datetime.utcnow().isoformat()
     }
     save_all_data(all_data)
@@ -869,17 +926,19 @@ async def start_game(interaction: discord.Interaction, map_type: str = "any"):
         "player_names": lobby["player_names"],
         "player_civs": [None] * len(lobby["players"]),
         "draft": draft,
-        "picks": {},  # pid -> chosen civ
+        "picks": {},
+        "difficulty": lobby.get("difficulty", "Prince"),
     }
 
     del data["lobbies"][host_id]
     save_all_data(all_data)
 
     map_label = {"land": "Land", "coastal": "Coastal", "any": "Any"}.get(map_type, "Any")
+    difficulty = lobby.get("difficulty", "Prince")
 
     # Build draft display — one field per player
     embed = discord.Embed(
-        title=f"⚔️  {len(lobby['players'])}-Player Game — Civ Draft ({map_label})",
+        title=f"⚔️  {len(lobby['players'])}-Player Game — Civ Draft ({map_label} · {difficulty})",
         description="Each player use `/pick_civ [civ]` to choose from your options below.\nAll players must pick before the game begins.",
         color=0xD4A017
     )
@@ -925,13 +984,15 @@ async def pick_civ(interaction: discord.Interaction, civ: str):
         await interaction.response.send_message(f"⚠️ You already picked **{picks[caller_id]}**.", ephemeral=True)
         return
 
-    # Must pick from their own draft
+    # Must pick from their own draft (case-insensitive)
     player_draft = draft.get(caller_id, [])
-    if civ not in player_draft:
+    matched_civ = next((c for c in player_draft if c.lower() == civ.lower()), None)
+    if not matched_civ:
         options = " · ".join(f"`{c}`" for c in player_draft)
         await interaction.response.send_message(
             f"❌ **{civ}** is not in your draft. Your options are:\n{options}", ephemeral=True)
         return
+    civ = matched_civ  # use correctly cased name
 
     # Check civ not already picked by someone else
     if civ in picks.values():
@@ -1035,13 +1096,21 @@ async def cancel_game(interaction: discord.Interaction):
     third="3rd place (optional)", fourth="4th place (optional)",
     fifth="5th place (optional)", sixth="6th place (optional)",
     seventh="7th place (optional)", eighth="8th place (optional)",
+    victory_type="How the winner won",
 )
+@app_commands.choices(victory_type=[
+    app_commands.Choice(name="Domination", value="Domination"),
+    app_commands.Choice(name="Science",    value="Science"),
+    app_commands.Choice(name="Culture",    value="Culture"),
+    app_commands.Choice(name="Diplomatic", value="Diplomatic"),
+])
 async def report_results(
     interaction: discord.Interaction,
     first: discord.Member, second: discord.Member,
     third: Optional[discord.Member] = None, fourth: Optional[discord.Member] = None,
     fifth: Optional[discord.Member] = None, sixth: Optional[discord.Member] = None,
     seventh: Optional[discord.Member] = None, eighth: Optional[discord.Member] = None,
+    victory_type: Optional[str] = None,
 ):
     raw = [first, second, third, fourth, fifth, sixth, seventh, eighth]
     members = [m for m in raw if m is not None]
@@ -1121,11 +1190,16 @@ async def report_results(
             f"{old_elo} → **{new_elo}** ({sign}{diff})  {rank_label(new_elo)}"
         )
 
+    group = game_groups.get(game_id, {})
+    difficulty = group.get("difficulty", "Prince")
+
     game_groups.pop(game_id, None)
     data["active_games"] = active_games
     data["game_groups"] = game_groups
     data["matches"].append({
         "type": f"{len(members)}-player",
+        "difficulty": difficulty,
+        "victory_type": victory_type,
         "players": [
             {"id": info["id"], "finish": info["finish"], "civ": info["civ"],
              "elo_before": info["old_elo"], "elo_after": new_elos[i]}
@@ -1136,11 +1210,16 @@ async def report_results(
 
     save_all_data(all_data)
 
+    victory_icons = {"Domination": "⚔️", "Science": "🚀", "Culture": "🎭", "Diplomatic": "🕊️"}
+    victory_str = f"{victory_icons.get(victory_type, '')} {victory_type} Victory" if victory_type else "Victory"
+
     embed = discord.Embed(
         title=f"🏛️  {len(members)}-Player Match Recorded!",
         description="\n".join(result_lines),
         color=0xD4A017
     )
+    embed.add_field(name="Victory", value=victory_str, inline=True)
+    embed.add_field(name="Difficulty", value=difficulty, inline=True)
     embed.set_footer(text=f"Reported by {interaction.user.display_name}")
     await interaction.response.send_message(embed=embed)
 
