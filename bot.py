@@ -493,6 +493,51 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
   .hist-filter {{ display: flex; gap: 6px; flex-shrink: 0; margin-bottom: 8px; }}
   .filter-btn {{ padding: 5px 12px; border-radius: 6px; border: 1px solid #1e2130; background: transparent; color: #475569; font-family: 'IBM Plex Mono', monospace; font-size: 10px; cursor: pointer; }}
   .filter-btn.active {{ border-color: #f97316; color: #f97316; }}
+  /* Player cards */
+  .player-cards-row {{ display: flex; gap: 8px; flex-shrink: 0; overflow-x: auto; padding-bottom: 2px; }}
+  .player-cards-row::-webkit-scrollbar {{ height: 3px; }}
+  .player-cards-row::-webkit-scrollbar-track {{ background: #1e2130; }}
+  .player-cards-row::-webkit-scrollbar-thumb {{ background: #f97316; border-radius: 2px; }}
+  .pcard {{ background: #0d1017; border-radius: 10px; padding: 8px 14px; position: relative; overflow: hidden; transition: transform 0.2s, box-shadow 0.2s; cursor: pointer; flex-shrink: 0; border: 1px solid #1e2130; min-width: 130px; }}
+  .pcard:hover, .pcard.profile-active {{ transform: translateY(-2px); }}
+  .pcard.profile-active {{ box-shadow: 0 0 0 1px currentColor; }}
+  .pcard-glow {{ position: absolute; bottom: 0; left: 0; right: 0; height: 60%; opacity: 0.08; transition: opacity 0.3s; border-radius: 0 0 10px 10px; }}
+  .pcard:hover .pcard-glow, .pcard.profile-active .pcard-glow {{ opacity: 0.2; }}
+  .pcard-rank {{ font-size: 9px; letter-spacing: 1px; margin-bottom: 3px; opacity: 0.7; }}
+  .pcard-name {{ font-weight: 700; font-size: 12px; margin-bottom: 2px; }}
+  .pcard-elo  {{ font-size: 18px; font-weight: 700; }}
+  .pcard-sub  {{ font-size: 9px; color: #475569; margin-top: 3px; }}
+  /* Rank strip */
+  .rank-strip {{ display: flex; gap: 5px; flex-wrap: wrap; flex-shrink: 0; margin-top: 8px; padding-top: 8px; border-top: 1px solid #1e2130; }}
+  .rank-badge {{ display: flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 20px; font-size: 9px; letter-spacing: 1px; border: 1px solid; opacity: 0.35; transition: opacity 0.3s; }}
+  .rank-badge.active {{ opacity: 1; }}
+  /* Panel switcher */
+  .panel-nav {{ display: flex; align-items: center; gap: 6px; }}
+  .panel-arrow {{ background: transparent; border: none; color: #475569; font-size: 18px; cursor: pointer; padding: 0 2px; transition: color 0.15s; line-height: 1; font-family: inherit; }}
+  .panel-arrow:hover {{ color: #e2e8f0; }}
+  /* H2H */
+  .h2h-scroll {{ flex: 1; overflow: auto; min-height: 0; }}
+  .h2h-table {{ border-collapse: collapse; width: 100%; }}
+  .h2h-table th, .h2h-table td {{ padding: 5px 8px; font-size: 10px; text-align: center; border: 1px solid #1e2130; white-space: nowrap; }}
+  .h2h-table th {{ color: #475569; font-size: 9px; letter-spacing: 1px; background: #080a0f; position: sticky; top: 0; }}
+  .h2h-table td.h2h-win  {{ background: #0c2010; color: #22c55e; font-weight: 700; }}
+  .h2h-table td.h2h-loss {{ background: #200c0c; color: #ef4444; font-weight: 700; }}
+  .h2h-table td.h2h-even {{ background: #1a1a0c; color: #eab308; }}
+  .h2h-table td.h2h-self {{ background: #080a0f; color: #1e2130; }}
+  .h2h-name {{ font-weight: 600; color: #e2e8f0; text-align: left !important; font-size: 10px; }}
+  /* Toasts */
+  .toast-container {{ position: fixed; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 999; pointer-events: none; }}
+  .toast {{ display: flex; align-items: center; gap: 14px; background: #0d1017; border: 1px solid #1e2130; border-radius: 10px; padding: 14px 16px; width: 290px; position: relative; overflow: hidden; pointer-events: all; transform: translateX(320px); transition: transform 0.4s cubic-bezier(0.4,0,0.2,1); }}
+  .toast.show {{ transform: translateX(0); }}
+  .toast-bar {{ position: absolute; left: 0; top: 0; bottom: 0; width: 3px; border-radius: 10px 0 0 10px; }}
+  .toast-shine {{ position: absolute; inset: 0; background: linear-gradient(90deg,transparent,rgba(255,255,255,0.03),transparent); animation: tshine 2s ease infinite; }}
+  @keyframes tshine {{ 0%{{transform:translateX(-100%)}} 100%{{transform:translateX(100%)}} }}
+  .toast-icon {{ font-size: 24px; flex-shrink: 0; }}
+  .toast-label {{ font-size: 9px; color: #64748b; letter-spacing: 2px; margin-bottom: 3px; }}
+  .toast-name  {{ font-family: 'Cinzel', serif; font-size: 13px; font-weight: 700; color: #e2e8f0; }}
+  .toast-desc  {{ font-size: 10px; color: #475569; margin-top: 2px; }}
+  .toast-prog  {{ position: absolute; bottom: 0; left: 0; height: 2px; border-radius: 0 0 0 10px; animation: tcountdown 4s linear forwards; }}
+  @keyframes tcountdown {{ from{{width:100%}} to{{width:0%}} }}
   .host-section {{ background: #0d1017; border: 1px solid #1e2130; border-radius: 12px; padding: 20px; margin-bottom: 14px; }}
   .host-section-title {{ font-size: 11px; color: #64748b; letter-spacing: 2px; margin-bottom: 14px; }}
   .player-card {{ display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: #080a0f; border: 1px solid #1e2130; border-radius: 8px; margin-bottom: 8px; }}
@@ -521,17 +566,34 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
 <!-- STATS PAGE -->
 <div class="page active" id="page-stats">
   <div style="display:flex;align-items:center;justify-content:space-between;flex-shrink:0;margin-bottom:8px">
-    <div class="player-grid" id="playerGrid"></div>
+    <div class="player-cards-row" id="playerGrid"></div>
     <label class="rank-toggle" style="flex-shrink:0;margin-left:12px"><input type="checkbox" id="rankToggle" checked onchange="toggleRanks()"> RANK LINES</label>
   </div>
   <div class="main-grid">
-    <div class="card card-elo">
-      <p class="card-title">ELO PROGRESSION OVER TIME</p>
-      <div class="chart-wrap"><canvas id="eloChart"></canvas></div>
+    <div class="card card-elo" style="gap:0">
+      <p class="card-title" style="margin-bottom:6px">ELO PROGRESSION OVER TIME</p>
+      <div class="chart-wrap" style="flex:1"><canvas id="eloChart"></canvas></div>
+      <div class="rank-strip" id="rankStrip">
+        <div class="rank-badge" id="rb-deity"     style="color:#f97316;border-color:#f97316">🏆 DEITY 1600+</div>
+        <div class="rank-badge" id="rb-emperor"   style="color:#a855f7;border-color:#a855f7">⚔️ EMPEROR 1400</div>
+        <div class="rank-badge" id="rb-king"      style="color:#06b6d4;border-color:#06b6d4">🛡️ KING 1250</div>
+        <div class="rank-badge" id="rb-prince"    style="color:#3b82f6;border-color:#3b82f6">⚙️ PRINCE 1100</div>
+        <div class="rank-badge" id="rb-chieftain" style="color:#22c55e;border-color:#22c55e">🌿 CHIEFTAIN 1000</div>
+        <div class="rank-badge" id="rb-settler"   style="color:#78716c;border-color:#78716c">🪨 SETTLER</div>
+      </div>
     </div>
     <div class="card" id="pieCard">
-      <p class="card-title">MOST PLAYED CIVILIZATIONS</p>
-      <div class="chart-wrap"><canvas id="pieChart"></canvas></div>
+      <div class="card-title">
+        <div class="panel-nav">
+          <button class="panel-arrow" onclick="prevPanel()">‹</button>
+          <span id="panelLabel">MOST PLAYED CIVS</span>
+          <button class="panel-arrow" onclick="nextPanel()">›</button>
+        </div>
+      </div>
+      <div class="chart-wrap" id="pieWrap"><canvas id="pieChart"></canvas></div>
+      <div class="h2h-scroll" id="h2hWrap" style="display:none">
+        <table class="h2h-table" id="h2hTable"></table>
+      </div>
     </div>
     <div class="card" id="lbCard">
       <p class="card-title">LEADERBOARD</p>
@@ -542,6 +604,7 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
     </div>
   </div>
 </div>
+<div class="toast-container" id="toastContainer"></div>
 
 <!-- LIVE GAMES PAGE -->
 <div class="page" id="page-live">
@@ -582,25 +645,25 @@ const PALETTE = ["#f97316","#3b82f6","#a855f7","#22c55e","#ef4444","#eab308","#0
 
 const TITLES = [
   {{id:"settler",   label:"🪨 Settler",          req: null}},
-  {{id:"chieftain", label:"🌿 Chieftain",         req: d => (d.wins||0)+(d.losses||0) >= 1}},
-  {{id:"sea_dog",   label:"⛵ Sea Dog",            req: d => (d.coastal_games||0) >= 1}},
-  {{id:"landlubber",label:"🏕️ Landlubber",         req: d => (d.land_games||0) >= 1}},
-  {{id:"explorer",  label:"🗺️ Explorer",           req: d => (d.unique_civs||0) >= 10}},
-  {{id:"tactician", label:"⚔️ Tactician",          req: d => (d.win_civs||0) >= 5}},
-  {{id:"polymath",  label:"🏛️ Polymath",           req: d => (d.win_civs||0) >= 10}},
-  {{id:"dom_i",     label:"⚔️ Conqueror",          req: d => (d.victory_counts?.Domination||0) >= 1}},
-  {{id:"sci_i",     label:"🚀 Space Pioneer",      req: d => (d.victory_counts?.Science||0) >= 1}},
-  {{id:"cul_i",     label:"🎭 Patron of the Arts", req: d => (d.victory_counts?.Culture||0) >= 1}},
-  {{id:"dip_i",     label:"🕊️ Diplomat",           req: d => (d.victory_counts?.Diplomatic||0) >= 1}},
-  {{id:"prince",    label:"⚙️ Prince",             req: d => (d.peak_elo||0) >= 1100}},
-  {{id:"king",      label:"🛡️ King",               req: d => (d.peak_elo||0) >= 1250}},
-  {{id:"emperor",   label:"⚔️ Emperor",            req: d => (d.peak_elo||0) >= 1400}},
-  {{id:"deity",     label:"🏆 Deity",              req: d => (d.peak_elo||0) >= 1600}},
-  {{id:"grand_vic", label:"👥 Grand Victor",        req: d => d.big_game_win}},
-  {{id:"full_house",label:"🎖️ Full House",          req: d => d.played_8}},
-  {{id:"d_prince",  label:"👑 Prince",             req: d => (d.difficulty_wins?.Prince||0) >= 1}},
-  {{id:"d_king",    label:"🏰 King Slayer",        req: d => (d.difficulty_wins?.King||0) >= 1}},
-  {{id:"trav",      label:"🌍 World Traveller",    req: d => (d.unique_civs||0) >= 20}},
+  {{id:"chieftain", label:"🌿 Chieftain",         req: d => !!(d && ((d.wins||0)+(d.losses||0) >= 1))}},
+  {{id:"sea_dog",   label:"⛵ Sea Dog",            req: d => !!(d && (d.coastal_games||0) >= 1)}},
+  {{id:"landlubber",label:"🏕️ Landlubber",         req: d => !!(d && (d.land_games||0) >= 1)}},
+  {{id:"explorer",  label:"🗺️ Explorer",           req: d => !!(d && (d.unique_civs||0) >= 10)}},
+  {{id:"tactician", label:"⚔️ Tactician",          req: d => !!(d && (d.win_civs||0) >= 5)}},
+  {{id:"polymath",  label:"🏛️ Polymath",           req: d => !!(d && (d.win_civs||0) >= 10)}},
+  {{id:"dom_i",     label:"⚔️ Conqueror",          req: d => !!(d && d.victory_counts && (d.victory_counts.Domination||0) >= 1)}},
+  {{id:"sci_i",     label:"🚀 Space Pioneer",      req: d => !!(d && d.victory_counts && (d.victory_counts.Science||0) >= 1)}},
+  {{id:"cul_i",     label:"🎭 Patron of the Arts", req: d => !!(d && d.victory_counts && (d.victory_counts.Culture||0) >= 1)}},
+  {{id:"dip_i",     label:"🕊️ Diplomat",           req: d => !!(d && d.victory_counts && (d.victory_counts.Diplomatic||0) >= 1)}},
+  {{id:"prince",    label:"⚙️ Prince",             req: d => !!(d && (d.peak_elo||0) >= 1100)}},
+  {{id:"king",      label:"🛡️ King",               req: d => !!(d && (d.peak_elo||0) >= 1250)}},
+  {{id:"emperor",   label:"⚔️ Emperor",            req: d => !!(d && (d.peak_elo||0) >= 1400)}},
+  {{id:"deity",     label:"🏆 Deity",              req: d => !!(d && (d.peak_elo||0) >= 1600)}},
+  {{id:"grand_vic", label:"👥 Grand Victor",        req: d => !!(d && d.big_game_win)}},
+  {{id:"full_house",label:"🎖️ Full House",          req: d => !!(d && d.played_8)}},
+  {{id:"d_prince",  label:"👑 Prince (difficulty)", req: d => !!(d && d.difficulty_wins && (d.difficulty_wins.Prince||0) >= 1)}},
+  {{id:"d_king",    label:"🏰 King Slayer",        req: d => !!(d && d.difficulty_wins && (d.difficulty_wins.King||0) >= 1)}},
+  {{id:"trav",      label:"🌍 World Traveller",    req: d => !!(d && (d.unique_civs||0) >= 20)}},
 ];
 
 function getPlayerColour(pid, fallbackIdx) {{
@@ -767,20 +830,50 @@ function toggleRanks() {{
 }}
 
 // ── Player buttons ────────────────────────────────────────────────────────────
+// ── Player cards ──────────────────────────────────────────────────────────────
 PLAYERS.forEach((p,i) => {{
-  const color = PALETTE[i%PALETTE.length];
-  const medals = ["🥇","🥈","🥉"];
-  const btn = document.createElement("button");
   const pCol = getPlayerColour(p.id, i);
-  btn.className = "player-btn";
-  btn.style.borderColor = pCol; btn.style.color = pCol;
-  btn.innerHTML = `<div class="player-name">${{medals[i]||"#"+(i+1)}} ${{p.name}}</div><div class="player-elo">${{p.finalElo}} · ${{rankLabel(p.finalElo)}}</div>`;
-  btn.onclick = () => {{
-    if (activeProfile === p.id) {{ activeProfile=null; btn.classList.remove("profile-active"); hideProfile(); }}
-    else {{ document.querySelectorAll(".player-btn").forEach(b=>b.classList.remove("profile-active")); activeProfile=p.id; btn.classList.add("profile-active"); showProfile(p,i); }}
+  const medals = ["🥇","🥈","🥉"];
+  const d = LB_DATA[p.id] || {{}};
+  const wins = d.wins||0, losses = d.losses||0, total = wins+losses;
+  const wr = total>0 ? Math.round(wins/total*100) : 0;
+  const fav = getPlayerFavCiv(p.id);
+  const title = getPlayerTitle(p.id);
+  const card = document.createElement("div");
+  card.className = "pcard";
+  card.id = "pcard-"+p.id;
+  card.style.color = pCol;
+  card.innerHTML = `
+    <div class="pcard-glow" style="background:radial-gradient(circle at 50% 100%,${{pCol}},transparent)"></div>
+    <div class="pcard-rank" style="color:${{pCol}}88">${{rankLabel(p.finalElo)}}${{title?" · "+title:""}}</div>
+    <div class="pcard-name" style="color:${{pCol}}">${{medals[i]||"#"+(i+1)}} ${{p.name}}</div>
+    <div class="pcard-elo" style="color:${{pCol}}">${{p.finalElo}}</div>
+    <div class="pcard-sub">${{wins}}W/${{losses}}L·${{wr}}%${{fav?" · ⭐"+fav:""}}</div>`;
+  card.onclick = () => {{
+    if (activeProfile === p.id) {{ activeProfile=null; card.classList.remove("profile-active"); hideProfile(); }}
+    else {{ document.querySelectorAll(".pcard").forEach(b=>b.classList.remove("profile-active")); activeProfile=p.id; card.classList.add("profile-active"); showProfile(p,i); }}
   }};
-  document.getElementById("playerGrid").appendChild(btn);
+  document.getElementById("playerGrid").appendChild(card);
 }});
+
+// Update rank badges based on player Elos
+function updateRankBadges() {{
+  const elos = PLAYERS.map(p => p.finalElo);
+  const max = Math.max(...elos);
+  const hasTiers = {{
+    deity:    elos.some(e=>e>=1600),
+    emperor:  elos.some(e=>e>=1400),
+    king:     elos.some(e=>e>=1250),
+    prince:   elos.some(e=>e>=1100),
+    chieftain:elos.some(e=>e>=1000),
+    settler:  elos.some(e=>e<1000),
+  }};
+  Object.entries(hasTiers).forEach(([tier,has]) => {{
+    const el = document.getElementById("rb-"+tier);
+    if (el) el.classList.toggle("active", has);
+  }});
+}}
+updateRankBadges();
 
 // ── Profile panel ─────────────────────────────────────────────────────────────
 function hideProfile() {{ profileCard.style.display="none"; pieCard.style.display="flex"; lbCard.style.display="flex"; }}
@@ -864,7 +957,7 @@ function showProfile(p, idx) {{
   }}
 }}
 
-function closeProfile() {{ activeProfile=null; document.querySelectorAll(".player-btn").forEach(b=>b.classList.remove("profile-active")); hideProfile(); }}
+function closeProfile() {{ activeProfile=null; document.querySelectorAll(".pcard").forEach(b=>b.classList.remove("profile-active")); hideProfile(); }}
 
 // ── Leaderboard ───────────────────────────────────────────────────────────────
 function buildLeaderboard() {{
@@ -878,21 +971,68 @@ function buildLeaderboard() {{
     const pTitle = getPlayerTitle(p.id);
     const pFav = getPlayerFavCiv(p.id);
     row.innerHTML=`<span style="font-size:18px;width:28px;text-align:center">${{lbMedals[i]||"#"+(i+1)}}</span><div style="flex:1"><div style="font-weight:600;font-size:13px;color:${{pColour}}">${{p.name}}${{pTitle?` <span style="font-size:9px;color:#64748b">${{pTitle}}</span>`:""}}</div><div style="font-size:10px;color:#475569;margin-top:3px">${{wins}}W/${{losses}}L·${{wr}}%WR${{pFav?` · ${{pFav}}`:""}}</div></div><div style="text-align:right"><div style="font-weight:700;font-size:14px;color:#e2e8f0">${{p.finalElo}}</div><div style="font-size:10px;color:#475569;margin-top:2px">${{rankLabel(p.finalElo)}}</div></div>`;
-    row.onclick=()=>{{if(activeProfile===p.id){{activeProfile=null;hideProfile();}}else{{activeProfile=p.id;document.querySelectorAll(".player-btn").forEach(b=>b.classList.remove("profile-active"));const btns=document.querySelectorAll(".player-btn");if(btns[i])btns[i].classList.add("profile-active");showProfile(p,i);}}}};
+    row.onclick=()=>{{if(activeProfile===p.id){{activeProfile=null;hideProfile();}}else{{activeProfile=p.id;document.querySelectorAll(".pcard").forEach(b=>b.classList.remove("profile-active"));const myCard=document.getElementById("pcard-"+p.id);if(myCard)myCard.classList.add("profile-active");showProfile(p,i);}}}};
     lbList.appendChild(row);
   }});
 }}
 buildLeaderboard();
 
-// ── Pie chart ─────────────────────────────────────────────────────────────────
+// ── Pie chart + H2H panel switcher ───────────────────────────────────────────
+const PANELS = ["MOST PLAYED CIVS","HEAD TO HEAD"];
+let panelIdx = 0;
+
 if (PIE_LABELS.length) {{
   new Chart(document.getElementById("pieChart").getContext("2d"),{{
     type:"doughnut",
     data:{{labels:PIE_LABELS,datasets:[{{data:PIE_VALUES,backgroundColor:PALETTE.concat(PALETTE),borderColor:"#080a0f",borderWidth:2,hoverOffset:6}}]}},
     options:{{responsive:true,maintainAspectRatio:false,plugins:{{legend:{{position:"right",labels:{{color:"#94a3b8",font:{{family:"IBM Plex Mono",size:9}},boxWidth:10,padding:8}}}},tooltip:{{backgroundColor:"#0f1117",borderColor:"#2a2d3a",borderWidth:1,titleColor:"#64748b",bodyColor:"#e2e8f0",titleFont:{{family:"IBM Plex Mono",size:11}},bodyFont:{{family:"IBM Plex Mono",size:12}},callbacks:{{label:ctx=>` ${{ctx.label}}: ${{ctx.parsed}} games`}}}}}}}}
   }});
-}} else {{
-  document.getElementById("pieCard").innerHTML='<p class="empty">No civ data yet</p>';
+}}
+
+// Build H2H table from match history
+(function buildH2H() {{
+  const table = document.getElementById("h2hTable");
+  if (!table || !PLAYERS.length) return;
+  // Count head to head from HISTORY
+  const h2h = {{}};
+  PLAYERS.forEach(p => {{ h2h[p.id] = {{}}; PLAYERS.forEach(q => {{ if(p.id!==q.id) h2h[p.id][q.id]={{w:0,l:0}}; }}); }});
+  HISTORY.forEach(g => {{
+    const ps = g.players;
+    for (let i=0; i<ps.length; i++) {{
+      for (let j=0; j<ps.length; j++) {{
+        if (i===j) continue;
+        const a=ps[i], b=ps[j];
+        if (!h2h[a.id]||!h2h[a.id][b.id]) continue;
+        if (a.finish < b.finish) h2h[a.id][b.id].w++;
+        else h2h[a.id][b.id].l++;
+      }}
+    }}
+  }});
+  const shortNames = PLAYERS.map(p => p.name.slice(0,6));
+  table.innerHTML = "<tr><th></th>" + shortNames.map(n=>`<th>${{n}}</th>`).join("") + "</tr>" +
+    PLAYERS.map((p,i) => `<tr><td class="h2h-name" style="color:${{getPlayerColour(p.id,i)}}">${{p.name}}</td>` +
+      PLAYERS.map(q => {{
+        if (p.id===q.id) return `<td class="h2h-self">—</td>`;
+        const r = h2h[p.id]?.[q.id]||{{w:0,l:0}};
+        if (r.w===0&&r.l===0) return `<td class="h2h-even" style="opacity:0.3">0–0</td>`;
+        const cls = r.w>r.l?"h2h-win":r.w<r.l?"h2h-loss":"h2h-even";
+        return `<td class="${{cls}}">${{r.w}}–${{r.l}}</td>`;
+      }}).join("")+"</tr>"
+    ).join("");
+}})();
+
+function prevPanel() {{
+  panelIdx = (panelIdx - 1 + PANELS.length) % PANELS.length;
+  showPanel();
+}}
+function nextPanel() {{
+  panelIdx = (panelIdx + 1) % PANELS.length;
+  showPanel();
+}}
+function showPanel() {{
+  document.getElementById("panelLabel").textContent = PANELS[panelIdx];
+  document.getElementById("pieWrap").style.display = panelIdx===0 ? "block" : "none";
+  document.getElementById("h2hWrap").style.display = panelIdx===1 ? "block" : "none";
 }}
 
 // ── Live Games ────────────────────────────────────────────────────────────────
@@ -1238,6 +1378,51 @@ async function hostSubmitResults(hostId, count) {{
   else {{ const t = await res.text(); alert("Could not submit: " + t); }}
 }}
 
+// ── Achievement Toasts ────────────────────────────────────────────────────────
+function showAchievementToast(icon, name, desc, color) {{
+  const container = document.getElementById("toastContainer");
+  if (!container) return;
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.innerHTML = `
+    <div class="toast-bar" style="background:${{color}}"></div>
+    <div class="toast-shine"></div>
+    <span class="toast-icon">${{icon}}</span>
+    <div>
+      <div class="toast-label">ACHIEVEMENT UNLOCKED</div>
+      <div class="toast-name">${{name}}</div>
+      <div class="toast-desc">${{desc}}</div>
+    </div>
+    <div class="toast-prog" style="background:${{color}}"></div>`;
+  container.appendChild(el);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>el.classList.add("show")));
+  setTimeout(() => {{
+    el.classList.remove("show");
+    setTimeout(() => el.remove(), 400);
+  }}, 4500);
+}}
+
+function checkAndShowToasts(prevData, newData) {{
+  // Compare old vs new achievement states and show toasts for newly unlocked ones
+  if (!prevData || !newData) return;
+  const toastColors = {{
+    "Explorer":"#f97316","World Traveller":"#f97316","Tactician":"#22c55e","Polymath":"#22c55e",
+    "Sea Dog":"#06b6d4","Landlubber":"#22c55e","Prince":"#3b82f6","King":"#06b6d4",
+    "Emperor":"#a855f7","Deity":"#f97316","Grand Victor":"#eab308","Full House":"#eab308",
+    "Domination I":"#ef4444","Domination V":"#ef4444","Domination X":"#ef4444",
+    "Science I":"#3b82f6","Science V":"#3b82f6","Science X":"#3b82f6",
+    "Culture I":"#a855f7","Culture V":"#a855f7","Culture X":"#a855f7",
+    "Diplomatic I":"#eab308","Diplomatic V":"#eab308","Diplomatic X":"#eab308",
+  }};
+  ACHIEVEMENTS.forEach((a, idx) => {{
+    const wasUnlocked = a.check(prevData);
+    const isUnlocked  = a.check(newData);
+    if (!wasUnlocked && isUnlocked) {{
+      setTimeout(() => showAchievementToast(a.icon, a.name, a.desc, toastColors[a.name]||"#f97316"), idx*600);
+    }}
+  }});
+}}
+
 // ── Auth ─────────────────────────────────────────────────────────────────────
 const authArea = document.getElementById("authArea");
 const guild = new URLSearchParams(window.location.search).get("guild") || GUILD_ID || "";
@@ -1262,9 +1447,9 @@ if (LOGGED_IN_ID && LOGGED_IN_NAME) {{
   const myIdx = PLAYERS.findIndex(p => p.id === LOGGED_IN_ID);
   if (myIdx >= 0) {{
     setTimeout(() => {{
-      document.querySelectorAll(".player-btn").forEach(b => b.classList.remove("profile-active"));
-      const btns = document.querySelectorAll(".player-btn");
-      if (btns[myIdx]) btns[myIdx].classList.add("profile-active");
+      document.querySelectorAll(".pcard").forEach(b => b.classList.remove("profile-active"));
+      const myCard = document.getElementById("pcard-"+LOGGED_IN_ID);
+      if (myCard) myCard.classList.add("profile-active");
       activeProfile = PLAYERS[myIdx].id;
       showProfile(PLAYERS[myIdx], myIdx);
     }}, 200);
@@ -1276,9 +1461,9 @@ if (LOGGED_IN_ID && LOGGED_IN_NAME) {{
 // ── Settings Modal ─────────────────────────────────────────────────────────
 function openSettingsModal() {{
   const mc = document.getElementById("modalContainer");
-  const myData = LB_DATA[LOGGED_IN_ID] || {{}};
+  const myData = (LOGGED_IN_ID && LB_DATA[LOGGED_IN_ID]) ? LB_DATA[LOGGED_IN_ID] : null;
   const myPrefs = PLAYER_PREFS[LOGGED_IN_ID] || {{}};
-  const unlockedTitles = TITLES.filter(t => !t.req || t.req(myData));
+  const unlockedTitles = TITLES.filter(t => !t.req || t.req(myData || {{}}));
   const colours = ["#f97316","#3b82f6","#a855f7","#22c55e","#ef4444","#eab308","#06b6d4","#ec4899","#f43f5e","#10b981","#8b5cf6","#0ea5e9","#ffffff","#94a3b8"];
   const currentColour = myPrefs.colour || "#f97316";
   const currentTitle = myPrefs.title || "";
@@ -1319,15 +1504,17 @@ function selectColour(c) {{
 }}
 
 async function saveSettings() {{
-  const name = document.getElementById("settingName").value.trim();
-  const civ  = document.getElementById("settingCiv").value;
+  const name   = document.getElementById("settingName")?.value.trim() || "";
+  const civ    = document.getElementById("settingCiv")?.value || "";
+  const colour = document.getElementById("settingColour")?.value || "";
+  const title  = document.getElementById("settingTitle")?.value || "";
   const res = await fetch("/api/prefs", {{
     method: "POST",
     headers: {{"Content-Type": "application/json"}},
-    body: JSON.stringify({{guild: guild, display_name: name, fav_civ: civ}})
+    body: JSON.stringify({{guild: guild, display_name: name, fav_civ: civ, colour, title}})
   }});
   if (res.ok) {{ closeModal(); refreshPage(); }}
-  else {{ alert("Failed to save settings."); }}
+  else {{ const t = await res.text(); alert("Failed to save: " + t); }}
 }}
 
 // ── Lobby Modal ────────────────────────────────────────────────────────────
@@ -1480,8 +1667,9 @@ async def handle_api_prefs(request):
         return web.Response(text="Invalid civ", status=400)
     all_data = load_all_data()
     data = get_server_data(all_data, guild_id)
-    if user_id not in data["players"]:
-        return web.Response(text="Player not found", status=404)
+    # Create player record if they haven't played yet
+    _, username_str = verify_session_token(request.cookies.get("session"))
+    get_player(data, user_id, username_str)
     data["players"][user_id].setdefault("prefs", {})
     colour = body.get("colour", "")
     title  = body.get("title", "")
