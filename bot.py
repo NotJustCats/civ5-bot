@@ -415,8 +415,22 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
     # Build per-player prefs for display
     player_prefs_json = _json.dumps({pid: p.get("prefs", {}) for pid, p in players.items()})
     my_prefs = players.get(logged_in_id or "", {}).get("prefs", {}) if logged_in_id else {}
-    upgrade_points_json = _json.dumps(my_prefs.get("upgrade_points", 0))
-    card_tiers_json = _json.dumps(my_prefs.get("card_tiers", {}))
+    # civ_wins: how many times this player has won with each civ
+    my_civ_wins = {}
+    for pid, p in players.items():
+        if pid == (logged_in_id or ""):
+            for civ_name, civ_stats in p.get("civs", {}).items():
+                my_civ_wins[civ_name] = civ_stats.get("wins", 0)
+    civ_wins_json = _json.dumps(my_civ_wins)
+    # Card tiers derived from civ wins: 1win=bronze, 3=silver, 6=gold, 10=diamond
+    def wins_to_tier(w):
+        if w >= 4: return "diamond"
+        if w >= 3: return "gold"
+        if w >= 2: return "silver"
+        if w >= 1: return "bronze"
+        return "normal"
+    auto_card_tiers = {civ: wins_to_tier(w) for civ, w in my_civ_wins.items()}
+    card_tiers_json = _json.dumps(auto_card_tiers)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -600,9 +614,9 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
     box-shadow: 0 0 0 1px #f97316;
   }}
   /* Hide card-only elements when expanded */
-  .civ-tile.expanded .civ-card-content {{ display: none; }}
+  .civ-tile.expanded .civ-card-content {{ display: none !important; }}
   /* Hide detail when collapsed */
-  .civ-tile:not(.expanded) .civ-detail {{ display: none; }}
+  .civ-tile:not(.expanded) .civ-detail {{ display: none !important; }}
   /* Anime-style shine — single diagonal sweep band */
   .civ-tile-shine {{
     position: absolute; inset: 0; border-radius: 12px; pointer-events: none; opacity: 0;
@@ -777,7 +791,7 @@ const DISPLAY_NAME = {display_name_json};
 const FAV_CIV = {fav_civ_json};
 const GUILD_ID = {guild_id_json};
 const PLAYER_PREFS = {player_prefs_json};
-const UPGRADE_POINTS = {upgrade_points_json};
+const CIV_WINS = {civ_wins_json};
 const CARD_TIERS = {card_tiers_json};
 const PALETTE = ["#f97316","#3b82f6","#a855f7","#22c55e","#ef4444","#eab308","#06b6d4","#ec4899","#f43f5e","#10b981","#8b5cf6","#0ea5e9"];
 
@@ -1340,7 +1354,6 @@ const TYPE_COLORS = {{"Ability":"#f97316","Building":"#3b82f6","Unit":"#ef4444",
 const COASTAL_CIVS = new Set(["Australia","Brunei","Carthage","Chile","Denmark","England","Indonesia","Japan","Kilwa","Korea","Netherlands","New Zealand","Norway","Oman","Philippines","Phoenicia","Polynesia","Portugal","Spain","Tonga","Tunisia","UAE","Venice"]);
 
 const TIER_ORDER = ["normal","bronze","silver","gold","diamond"];
-const TIER_COSTS = {{normal:0, bronze:1, silver:2, gold:3, diamond:4}};
 const TIER_LABELS = {{
   normal:  {{icon:"",   label:"Normal",  color:"#475569", border:"#1e2130"}},
   bronze:  {{icon:"🥉", label:"Bronze",  color:"#c8762e", border:"#7c4a1e"}},
@@ -1353,28 +1366,12 @@ function getCivTier(civName) {{
   return CARD_TIERS[civName] || "normal";
 }}
 
-function getNextTier(civName) {{
-  const cur = getCivTier(civName);
-  const idx = TIER_ORDER.indexOf(cur);
-  return idx < TIER_ORDER.length - 1 ? TIER_ORDER[idx + 1] : null;
-}}
-
-function getUpgradeCost(civName) {{
-  const next = getNextTier(civName);
-  return next ? TIER_COSTS[next] : null;
-}}
-
-async function upgradeCiv(civName) {{
-  const next = getNextTier(civName);
-  const cost = getUpgradeCost(civName);
-  if (!next || UPGRADE_POINTS < cost) return;
-  const res = await fetch("/api/upgrade_card", {{
-    method: "POST",
-    headers: {{"Content-Type": "application/json"}},
-    body: JSON.stringify({{guild: guild, civ: civName}})
-  }});
-  if (res.ok) {{ refreshPage(); }}
-  else {{ const t = await res.text(); alert("Could not upgrade: " + t); }}
+function winsToTier(w) {{
+  if (w >= 4) return "diamond";
+  if (w >= 3) return "gold";
+  if (w >= 2) return "silver";
+  if (w >= 1) return "bronze";
+  return "normal";
 }}
 
 // Tier-specific metallic shine override
@@ -1459,33 +1456,35 @@ function buildCivDetail(name) {{
     </div>`;
   }}).join("");
 
-  // Upgrade section
+  // Card tier progress section
   let upgradeHtml = "";
   if (LOGGED_IN_ID) {{
     const tier = getCivTier(name);
     const tierInfo = TIER_LABELS[tier];
-    const next = getNextTier(name);
-    const cost = getUpgradeCost(name);
-    const nextInfo = next ? TIER_LABELS[next] : null;
-    const canAfford = next && UPGRADE_POINTS >= cost;
+    const wins = CIV_WINS[name] || 0;
+    const thresholds = [{{tier:"bronze",at:1}},{{tier:"silver",at:2}},{{tier:"gold",at:3}},{{tier:"diamond",at:4}}];
+    const next = thresholds.find(t => wins < t.at);
+    const nextInfo = next ? TIER_LABELS[next.tier] : null;
+    const winsNeeded = next ? next.at - wins : 0;
+    // Progress bar to next tier
+    const prevAt = next ? (thresholds[thresholds.indexOf(next)-1]?.at || 0) : 6;
+    const progress = next ? Math.round((wins - prevAt) / (next.at - prevAt) * 100) : 100;
     upgradeHtml = `<div style="margin-top:14px;padding:12px;background:#080a0f;border:1px solid #1e2130;border-radius:8px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
         <div>
           <div style="font-size:9px;color:#475569;letter-spacing:2px;margin-bottom:3px">CARD TIER</div>
-          <div style="font-size:13px;font-weight:700;color:${{tierInfo.color}}">${{tierInfo.icon}} ${{tierInfo.label}}</div>
+          <div style="font-size:13px;font-weight:700;color:${{tierInfo.color}}">${{tierInfo.icon||"🃏"}} ${{tierInfo.label}}</div>
         </div>
         <div style="text-align:right">
-          <div style="font-size:9px;color:#475569;letter-spacing:2px;margin-bottom:3px">UPGRADE POINTS</div>
-          <div style="font-size:16px;font-weight:700;color:#f97316">${{UPGRADE_POINTS}} pts</div>
+          <div style="font-size:9px;color:#475569;letter-spacing:2px;margin-bottom:3px">WINS WITH CIV</div>
+          <div style="font-size:16px;font-weight:700;color:#e2e8f0">${{wins}}</div>
         </div>
       </div>
-      ${{next ? `
-        <button class="upgrade-btn" style="color:${{nextInfo.color}};border-color:${{nextInfo.border}};width:100%;justify-content:center;${{!canAfford?'opacity:0.35;cursor:not-allowed':''}}"
-          ${{canAfford ? `onclick="upgradeCiv('${{name}}')"` : 'disabled'}}>
-          Upgrade to ${{nextInfo.icon}} ${{nextInfo.label}} &nbsp;·&nbsp; ${{cost}} pt${{cost>1?'s':''}}
-        </button>
-        ${{!canAfford ? `<div style="font-size:9px;color:#334155;text-align:center;margin-top:6px">Need ${{cost - UPGRADE_POINTS}} more point${{cost-UPGRADE_POINTS>1?'s':''}}</div>` : ""}}
-      ` : `<div style="font-size:10px;color:#f97316;text-align:center">✦ Max tier reached ✦</div>`}}
+      ${{nextInfo ? `
+        <div style="font-size:9px;color:#475569;margin-bottom:6px">Next: ${{nextInfo.icon}} ${{nextInfo.label}} at ${{next.at}} wins &nbsp;·&nbsp; ${{winsNeeded}} to go</div>
+        <div style="height:4px;background:#1e2130;border-radius:2px;overflow:hidden">
+          <div style="height:100%;width:${{progress}}%;background:${{nextInfo.color}};border-radius:2px;transition:width 0.6s ease"></div>
+        </div>` : `<div style="font-size:10px;color:#f97316;text-align:center">✦ Max tier reached — Diamond ✦</div>`}}
     </div>`;
   }}
 
@@ -2597,7 +2596,6 @@ async def handle_api_game_report(request):
         p["elo"] = new_elo
         if i == 0:
             p["wins"] += 1
-            p.setdefault("prefs", {})["upgrade_points"] = p.get("prefs", {}).get("upgrade_points", 0) + 1
         else: p["losses"] += 1
         civ = info["civ"]
         if civ:
@@ -2647,35 +2645,6 @@ async def handle_api_lobby_leave(request):
     save_all_data(all_data)
     return web.Response(text="OK")
 
-async def handle_api_upgrade_card(request):
-    session_token = request.cookies.get("session")
-    if not session_token: return web.Response(text="Not logged in", status=401)
-    user_id, _ = verify_session_token(session_token)
-    if not user_id: return web.Response(text="Invalid session", status=401)
-    body = await request.json()
-    guild_id = body.get("guild", "")
-    civ = body.get("civ", "")
-    all_data = load_all_data()
-    data = get_server_data(all_data, guild_id)
-    if user_id not in data["players"]:
-        return web.Response(text="Player not found", status=404)
-    prefs = data["players"][user_id].setdefault("prefs", {})
-    tiers = ["normal","bronze","silver","gold","diamond"]
-    costs = {"bronze":1,"silver":2,"gold":3,"diamond":4}
-    current = prefs.get("card_tiers", {}).get(civ, "normal")
-    idx = tiers.index(current)
-    if idx >= len(tiers) - 1:
-        return web.Response(text="Already max tier", status=400)
-    next_tier = tiers[idx + 1]
-    cost = costs[next_tier]
-    points = prefs.get("upgrade_points", 0)
-    if points < cost:
-        return web.Response(text="Not enough points", status=400)
-    prefs["upgrade_points"] = points - cost
-    prefs.setdefault("card_tiers", {})[civ] = next_tier
-    save_all_data(all_data)
-    return web.Response(text="OK")
-
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/graph", handle_graph)
@@ -2684,7 +2653,6 @@ async def start_web_server():
     app.router.add_get("/logout", handle_logout)
     app.router.add_get("/data", handle_data)
     app.router.add_post("/api/prefs", handle_api_prefs)
-    app.router.add_post("/api/upgrade_card", handle_api_upgrade_card)
     app.router.add_post("/api/lobby/create", handle_api_lobby_create)
     app.router.add_post("/api/lobby/join", handle_api_lobby_join)
     app.router.add_post("/api/lobby/leave", handle_api_lobby_leave)
