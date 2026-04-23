@@ -623,6 +623,7 @@ function victoryBadge(vt) {{
 }}
 
 // ── Tab switching ─────────────────────────────────────────────────────────────
+let _pollInterval = null;
 function switchTab(name) {{
   document.querySelectorAll(".tab").forEach((t,i) => {{
     const names = ["stats","live","history","host"];
@@ -633,6 +634,38 @@ function switchTab(name) {{
   if (name === "live") buildLive();
   if (name === "history") buildHistory();
   if (name === "host") buildHostPage();
+  // Auto-poll on live/host tabs
+  clearInterval(_pollInterval);
+  if (name === "live" || name === "host") {{
+    _pollInterval = setInterval(async () => {{
+      try {{
+        const res = await fetch("/data");
+        const all = await res.json();
+        const serverData = all[GUILD_ID] || {{}};
+        const groups = serverData.game_groups || {{}};
+        const lobbies = serverData.lobbies || {{}};
+        // Rebuild live data
+        const newLive = [];
+        for (const [gid, grp] of Object.entries(groups)) {{
+          const picks = grp.picks || {{}};
+          const draft = grp.draft || {{}};
+          const ps = (grp.players||[]).map((pid,i) => ({{
+            id: pid, name: (grp.player_names||[])[i]||pid,
+            chosen: picks[pid]||null, pool: draft[pid]||[]
+          }}));
+          newLive.push({{host:(serverData.players||{{}})[gid]?.name||ps[0]?.name||"?",host_id:gid,difficulty:grp.difficulty||"Prince",map_type:grp.map_type||"any",players:ps}});
+        }}
+        for (const [hid, lob] of Object.entries(lobbies)) {{
+          const pids = lob.players||[]; const pnames = lob.player_names||[];
+          newLive.push({{host:lob.host_name||"?",host_id:hid,difficulty:lob.difficulty||"Prince",status:"lobby",map_type:"lobby",players:pids.map((pid,i)=>(({{id:pid,name:pnames[i]||pid,chosen:null,pool:[]}}))),}});
+        }}
+        LIVE_GAMES.length = 0;
+        newLive.forEach(g => LIVE_GAMES.push(g));
+        if (name === "live") buildLive();
+        if (name === "host") buildHostPage();
+      }} catch(e) {{}}
+    }}, 8000);
+  }}
 }}
 
 // ── Elo chart ─────────────────────────────────────────────────────────────────
@@ -1089,13 +1122,54 @@ function buildHostPage() {{
   }}
 }}
 
+// ── Core utility functions ────────────────────────────────────────────────────
+function currentTab() {{
+  const active = document.querySelector(".tab.active");
+  if (!active) return "stats";
+  const idx = Array.from(document.querySelectorAll(".tab")).indexOf(active);
+  return ["stats","live","history","host"][idx] || "stats";
+}}
+
+function refreshPage() {{
+  // Reload data without going back to stats
+  const tab = currentTab();
+  window.location.href = window.location.href.split("?")[0] + "?guild=" + guild + "&tab=" + tab;
+}}
+
+// Read tab from URL on load
+(function() {{
+  const urlTab = new URLSearchParams(window.location.search).get("tab");
+  if (urlTab && urlTab !== "stats") {{
+    setTimeout(() => switchTab(urlTab), 50);
+  }}
+}})();
+
+async function pickCiv(hostId, civ) {{
+  const res = await fetch("/api/game/pick", {{
+    method: "POST", headers: {{"Content-Type": "application/json"}},
+    body: JSON.stringify({{guild: guild, host_id: hostId, civ}})
+  }});
+  if (res.ok) {{ refreshPage(); }}
+  else {{ const t = await res.text(); alert("Could not pick: " + t); }}
+}}
+
+async function cancelGame(hostId, type) {{
+  if (!confirm("Cancel this " + type + "? No Elo changes will be made.")) return;
+  const res = await fetch("/api/game/cancel", {{
+    method: "POST", headers: {{"Content-Type": "application/json"}},
+    body: JSON.stringify({{guild: guild, host_id: hostId}})
+  }});
+  if (res.ok) {{ refreshPage(); }}
+  else {{ const t = await res.text(); alert("Could not cancel: " + t); }}
+}}
+
 async function hostCreateLobby() {{
   const difficulty = document.getElementById("hDiff").value;
   const res = await fetch("/api/lobby/create", {{
     method: "POST", headers: {{"Content-Type": "application/json"}},
     body: JSON.stringify({{guild: guild, difficulty}})
   }});
-  if (res.ok) {{ location.reload(); }}
+  if (res.ok) {{ refreshPage(); }}
   else {{ const t = await res.text(); alert("Could not create lobby: " + t); }}
 }}
 
@@ -1105,7 +1179,7 @@ async function hostStartGame(hostId) {{
     method: "POST", headers: {{"Content-Type": "application/json"}},
     body: JSON.stringify({{guild: guild, host_id: hostId, map_type: mapType}})
   }});
-  if (res.ok) {{ location.reload(); }}
+  if (res.ok) {{ refreshPage(); }}
   else {{ const t = await res.text(); alert("Could not start: " + t); }}
 }}
 
@@ -1121,7 +1195,7 @@ async function hostSubmitResults(hostId, count) {{
     method: "POST", headers: {{"Content-Type": "application/json"}},
     body: JSON.stringify({{guild: guild, host_id: hostId, order, victory_type: victoryType}})
   }});
-  if (res.ok) {{ location.reload(); }}
+  if (res.ok) {{ refreshPage(); }}
   else {{ const t = await res.text(); alert("Could not submit: " + t); }}
 }}
 
@@ -1190,7 +1264,7 @@ async function saveSettings() {{
     headers: {{"Content-Type": "application/json"}},
     body: JSON.stringify({{guild: guild, display_name: name, fav_civ: civ}})
   }});
-  if (res.ok) {{ closeModal(); location.reload(); }}
+  if (res.ok) {{ closeModal(); refreshPage(); }}
   else {{ alert("Failed to save settings."); }}
 }}
 
@@ -1222,7 +1296,7 @@ async function createLobby() {{
     headers: {{"Content-Type": "application/json"}},
     body: JSON.stringify({{guild: guild, difficulty}})
   }});
-  if (res.ok) {{ closeModal(); switchTab("live"); location.reload(); }}
+  if (res.ok) {{ closeModal(); switchTab("live"); refreshPage(); }}
   else {{ alert("Failed to create lobby."); }}
 }}
 
@@ -1233,7 +1307,7 @@ async function joinLobby(hostId) {{
     headers: {{"Content-Type": "application/json"}},
     body: JSON.stringify({{guild: guild, host_id: hostId}})
   }});
-  if (res.ok) {{ location.reload(); }}
+  if (res.ok) {{ refreshPage(); }}
   else {{ const t = await res.text(); alert("Could not join: " + t); }}
 }}
 
@@ -1243,7 +1317,7 @@ async function leaveLobby(hostId) {{
     headers: {{"Content-Type": "application/json"}},
     body: JSON.stringify({{guild: guild, host_id: hostId}})
   }});
-  if (res.ok) {{ location.reload(); }}
+  if (res.ok) {{ refreshPage(); }}
   else {{ alert("Failed to leave lobby."); }}
 }}
 
