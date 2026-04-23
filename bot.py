@@ -916,23 +916,23 @@ async def handle_callback(request):
     redirect_uri = f"{PUBLIC_URL}/callback"
     # Exchange code for token
     async with ClientSession() as session:
-        async with session.post("https://discord.com/api/oauth2/token", data={{
+        async with session.post("https://discord.com/api/oauth2/token", data={
             "client_id": DISCORD_CLIENT_ID,
             "client_secret": DISCORD_CLIENT_SECRET,
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": redirect_uri,
-        }}) as resp:
+        }) as resp:
             token_data = await resp.json()
         access_token = token_data.get("access_token")
         if not access_token:
             return web.Response(text="OAuth error — could not get access token.", status=400)
-        async with session.get("https://discord.com/api/users/@me", headers={{"Authorization": f"Bearer {{access_token}}"}}) as resp:
+        async with session.get("https://discord.com/api/users/@me", headers={"Authorization": f"Bearer {access_token}"}) as resp:
             user_data = await resp.json()
     user_id = user_data.get("id", "")
     username = user_data.get("username", "unknown")
     session_token = make_session_token(user_id, username)
-    response = web.HTTPFound(f"/graph?guild={{guild_id}}")
+    response = web.HTTPFound(f"/graph?guild={guild_id}")
     response.set_cookie("session", session_token, max_age=60*60*24*30, httponly=True, samesite="Lax")
     return response
 
