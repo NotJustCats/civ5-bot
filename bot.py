@@ -791,8 +791,8 @@ if (PLAYERS.length) {{
       datasets: PLAYERS.map((p,i) => ({{
         label: p.name,
         data: TIMELINE.map(t => t[p.id] ?? null),
-        borderColor: PALETTE[i%PALETTE.length],
-        backgroundColor: PALETTE[i%PALETTE.length],
+        borderColor: getPlayerColour(p.id, i),
+        backgroundColor: getPlayerColour(p.id, i),
         borderWidth: 2.5, pointRadius: 4, pointHoverRadius: 7, tension: 0.3, spanGaps: true,
       }}))
     }},
@@ -1037,31 +1037,92 @@ function showPanel() {{
 
 // ── Live Games ────────────────────────────────────────────────────────────────
 function buildLive() {{
-  const el=document.getElementById("liveContent");
-  // Create lobby button for logged-in users
-  const createBtn = LOGGED_IN_ID ? `<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-primary" onclick="openLobbyModal()">+ Create Lobby</button></div>` : "";
-  if(!LIVE_GAMES.length){{el.innerHTML=createBtn+'<p class="no-games">NO ACTIVE GAMES RIGHT NOW</p>';return;}}
-  el.innerHTML=createBtn;
-  LIVE_GAMES.forEach((g,gi)=>{{
-    const isLobby=g.status==="lobby";
-    const pickedCount=g.players.filter(p=>p.chosen).length;
-    const card=document.createElement("div"); card.className="game-card";
-    const liveMapLabel = {{"land":"🏕️ Land","coastal":"⛵ Coastal","any":"🌐 Any","skip":"No draft"}}[g.map_type]||"";
-    card.innerHTML=`
+  const el = document.getElementById("liveContent");
+  if (!LIVE_GAMES.length) {{
+    el.innerHTML = '<p class="no-games">NO ACTIVE GAMES RIGHT NOW</p>';
+    return;
+  }}
+  el.innerHTML = "";
+
+  LIVE_GAMES.forEach((g, gi) => {{
+    const isLobby = g.status === "lobby";
+    const pickedCount = g.players.filter(p => p.chosen).length;
+    const mapLabel = {{"land":"🏕️ Land","coastal":"⛵ Coastal","any":"🌐 Any","skip":"No draft"}}[g.map_type] || "";
+    const amIHost = LOGGED_IN_ID && g.host_id === LOGGED_IN_ID;
+    const amIIn = LOGGED_IN_ID && g.players.some(p => p.id === LOGGED_IN_ID);
+    const amIInAnyGame = LOGGED_IN_ID && LIVE_GAMES.some(x => x.players.some(p => p.id === LOGGED_IN_ID));
+    const myData = g.players.find(p => p.id === LOGGED_IN_ID);
+    const iHavePicked = myData && myData.chosen;
+
+    const card = document.createElement("div");
+    card.className = "game-card";
+    // Auto-expand if I'm in this game
+    const bodyOpen = amIIn ? "open" : "";
+
+    // Player rows
+    const playerRowsHtml = g.players.map(p => {{
+      const isMe = p.id === LOGGED_IN_ID;
+      const civBadge = p.chosen
+        ? `<span class="badge" style="color:#22c55e;background:#0c2010;border:1px solid #22c55e44">${{p.chosen}}</span>`
+        : `<span class="badge" style="color:#475569">picking...</span>`;
+
+      // Show clickable draft pool only for me in draft phase
+      let poolHtml = "";
+      if (p.pool && p.pool.length) {{
+        if (isMe && !iHavePicked && !isLobby) {{
+          poolHtml = `<div class="pool-label" style="color:#f97316;margin-top:8px">YOUR DRAFT — click to pick</div>
+            <div class="pool-civs" style="margin-top:4px">
+              ${{p.pool.map(c => `<button onclick="pickCiv('${{g.host_id}}','${{c}}')" style="padding:4px 10px;border-radius:6px;border:1px solid #1e2130;background:#080a0f;color:#94a3b8;font-family:inherit;font-size:10px;cursor:pointer;transition:all 0.15s" onmouseover="this.style.borderColor='#f97316';this.style.color='#f97316'" onmouseout="this.style.borderColor='#1e2130';this.style.color='#94a3b8'">${{c}}</button>`).join("")}}
+            </div>`;
+        }} else {{
+          poolHtml = `<div class="pool-label">DRAFT POOL</div>
+            <div class="pool-civs">${{p.pool.map(c => `<span class="pool-civ ${{c===p.chosen?"chosen":""}}">${{c}}</span>`).join("")}}</div>`;
+        }}
+      }}
+
+      return `<div class="player-row" style="flex-wrap:wrap">
+        <div style="flex:1;font-weight:600;${{isMe?"color:#f97316":""}}">${{p.name}}${{isMe?" (you)":""}}</div>
+        ${{civBadge}}
+      </div>${{poolHtml}}`;
+    }}).join("");
+
+    // Action buttons for non-hosts
+    let actionHtml = "";
+    if (LOGGED_IN_ID && !amIHost) {{
+      if (isLobby && !amIIn && !amIInAnyGame) {{
+        actionHtml = `<div style="margin-top:12px;padding-top:12px;border-top:1px solid #1e2130">
+          <button class="btn btn-primary" onclick="joinLobby('${{g.host_id}}')">Join Lobby</button>
+        </div>`;
+      }} else if (isLobby && amIIn) {{
+        actionHtml = `<div style="margin-top:12px;padding-top:12px;border-top:1px solid #1e2130">
+          <button class="btn btn-ghost" onclick="leaveLobby('${{g.host_id}}')">Leave Lobby</button>
+        </div>`;
+      }} else if (!isLobby && amIIn && iHavePicked) {{
+        actionHtml = `<div style="margin-top:12px;padding-top:12px;border-top:1px solid #1e2130">
+          <p style="font-size:11px;color:#475569;margin-bottom:8px">✅ You picked <strong style="color:#22c55e">${{myData.chosen}}</strong> — waiting for others...</p>
+          <button class="btn btn-ghost" onclick="cancelGame('${{g.host_id}}','game')">✕ Cancel Game</button>
+        </div>`;
+      }} else if (!isLobby && amIIn && !iHavePicked) {{
+        actionHtml = `<div style="margin-top:12px;padding-top:12px;border-top:1px solid #1e2130">
+          <button class="btn btn-ghost" onclick="cancelGame('${{g.host_id}}','game')">✕ Cancel Game</button>
+        </div>`;
+      }}
+    }}
+
+    // Host badge in header
+    const hostNote = amIHost ? ` <span style="font-size:9px;color:#f97316;border:1px solid #f97316;border-radius:4px;padding:1px 5px">YOU HOST</span>` : "";
+
+    card.innerHTML = `
       <div class="game-header" onclick="toggleGame('live-${{gi}}')">
         <div>
-          <div class="game-title">${{isLobby?"🏛️ Open Lobby":"⚔️ Game In Progress"}} · Host: ${{g.host}}</div>
-          <div class="game-meta">${{g.players.length}} players · ${{g.difficulty}}${{liveMapLabel?" · "+liveMapLabel:""}}${{isLobby?"":" · "+pickedCount+"/"+g.players.length+" picked"}}</div>
+          <div class="game-title">${{isLobby?"🏛️ Open Lobby":"⚔️ In Progress"}} · ${{g.host}}${{hostNote}}</div>
+          <div class="game-meta">${{g.players.length}} players · ${{g.difficulty}}${{mapLabel?" · "+mapLabel:""}}${{isLobby?"":" · "+pickedCount+"/"+g.players.length+" picked"}}</div>
         </div>
-        <span class="chevron" id="chev-live-${{gi}}">▼</span>
+        <span class="chevron ${{bodyOpen}}" id="chev-live-${{gi}}">▼</span>
       </div>
-      <div class="game-body" id="live-${{gi}}">
-        ${{g.players.map(p=>`
-          <div class="player-row">
-            <div style="flex:1;font-weight:600">${{p.name}}</div>
-            ${{p.chosen?`<span class="badge" style="color:#22c55e;background:#0c2010;border:1px solid #22c55e44">${{p.chosen}}</span>`:'<span class="badge">picking...</span>'}}
-          </div>
-          ${{p.pool.length?`<div class="pool-label">DRAFT POOL</div><div class="pool-civs">${{p.pool.map(c=>`<span class="pool-civ ${{c===p.chosen?"chosen":""}}">${{c}}</span>`).join("")}}</div>`:""}}`).join("")}}
+      <div class="game-body ${{bodyOpen}}" id="live-${{gi}}">
+        ${{playerRowsHtml}}
+        ${{actionHtml}}
       </div>`;
     el.appendChild(card);
   }});
