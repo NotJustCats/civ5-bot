@@ -386,6 +386,7 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
     for host_id, lobby in lobbies.items():
         live_games.append({
             "host": lobby.get("host_name", "?"),
+            "host_id": host_id,
             "difficulty": lobby.get("difficulty", "Prince"),
             "status": "lobby",
             "players": [{"name": n, "chosen": None, "pool": []} for n in lobby.get("player_names", [])],
@@ -402,6 +403,12 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
     match_index_json = _json.dumps(match_index)
     logged_in_id_json = _json.dumps(logged_in_id or "")
     logged_in_name_json = _json.dumps(logged_in_name or "")
+    all_civs_json = _json.dumps(ALL_CIVS)
+    # Load display name and fav civ from player prefs
+    prefs = players.get(logged_in_id or "", {{}}).get("prefs", {{}}) if logged_in_id else {{}}
+    display_name_json = _json.dumps(prefs.get("display_name", logged_in_name or ""))
+    fav_civ_json = _json.dumps(prefs.get("fav_civ", ""))
+    guild_id_json = _json.dumps(guild_id)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -467,6 +474,20 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
   .hist-elo.pos {{ color: #22c55e; }}
   .hist-elo.neg {{ color: #ef4444; }}
   .no-games {{ text-align: center; color: #334155; padding: 60px; font-size: 12px; letter-spacing: 1px; }}
+  .modal-overlay {{ position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; display: flex; align-items: center; justify-content: center; }}
+  .modal {{ background: #0d1017; border: 1px solid #1e2130; border-radius: 14px; padding: 24px; width: 380px; max-width: 90vw; }}
+  .modal-title {{ font-size: 14px; font-weight: 700; color: #e2e8f0; margin-bottom: 16px; }}
+  .form-label {{ font-size: 10px; color: #64748b; letter-spacing: 1px; margin-bottom: 5px; display: block; }}
+  .form-input {{ width: 100%; background: #080a0f; border: 1px solid #1e2130; border-radius: 8px; padding: 8px 12px; color: #e2e8f0; font-family: 'IBM Plex Mono', monospace; font-size: 12px; outline: none; margin-bottom: 12px; }}
+  .form-input:focus {{ border-color: #f97316; }}
+  .form-select {{ width: 100%; background: #080a0f; border: 1px solid #1e2130; border-radius: 8px; padding: 8px 12px; color: #e2e8f0; font-family: 'IBM Plex Mono', monospace; font-size: 12px; outline: none; margin-bottom: 12px; }}
+  .btn {{ padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer; font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; transition: opacity 0.15s; }}
+  .btn:hover {{ opacity: 0.8; }}
+  .btn-primary {{ background: #f97316; color: #080a0f; }}
+  .btn-ghost {{ background: transparent; border: 1px solid #1e2130; color: #475569; }}
+  .hist-filter {{ display: flex; gap: 6px; flex-shrink: 0; margin-bottom: 8px; }}
+  .filter-btn {{ padding: 5px 12px; border-radius: 6px; border: 1px solid #1e2130; background: transparent; color: #475569; font-family: 'IBM Plex Mono', monospace; font-size: 10px; cursor: pointer; }}
+  .filter-btn.active {{ border-color: #f97316; color: #f97316; }}
 </style>
 </head>
 <body>
@@ -513,8 +534,13 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
 
 <!-- HISTORY PAGE -->
 <div class="page" id="page-history">
+  <div class="hist-filter" id="histFilter" style="display:none">
+    <button class="filter-btn active" onclick="filterHistory('all')">ALL GAMES</button>
+    <button class="filter-btn" onclick="filterHistory('mine')">MY GAMES</button>
+  </div>
   <div class="scroll-page" id="historyContent"></div>
 </div>
+<div id="modalContainer"></div>
 
 <script>
 const TIMELINE = {timeline_json};
@@ -527,6 +553,10 @@ const LIVE_GAMES = {live_games_json};
 const MATCH_INDEX = {match_index_json};
 const LOGGED_IN_ID = {logged_in_id_json};
 const LOGGED_IN_NAME = {logged_in_name_json};
+const ALL_CIVS = {all_civs_json};
+const DISPLAY_NAME = {display_name_json};
+const FAV_CIV = {fav_civ_json};
+const GUILD_ID = {guild_id_json};
 const PALETTE = ["#f97316","#3b82f6","#a855f7","#22c55e","#ef4444","#eab308","#06b6d4","#ec4899","#f43f5e","#10b981","#8b5cf6","#0ea5e9"];
 
 const ACHIEVEMENTS = [
@@ -764,8 +794,10 @@ if (PIE_LABELS.length) {{
 // ── Live Games ────────────────────────────────────────────────────────────────
 function buildLive() {{
   const el=document.getElementById("liveContent");
-  if(!LIVE_GAMES.length){{el.innerHTML='<p class="no-games">NO ACTIVE GAMES RIGHT NOW</p>';return;}}
-  el.innerHTML="";
+  // Create lobby button for logged-in users
+  const createBtn = LOGGED_IN_ID ? `<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-primary" onclick="openLobbyModal()">+ Create Lobby</button></div>` : "";
+  if(!LIVE_GAMES.length){{el.innerHTML=createBtn+'<p class="no-games">NO ACTIVE GAMES RIGHT NOW</p>';return;}}
+  el.innerHTML=createBtn;
   LIVE_GAMES.forEach((g,gi)=>{{
     const isLobby=g.status==="lobby";
     const pickedCount=g.players.filter(p=>p.chosen).length;
@@ -794,11 +826,15 @@ function buildLive() {{
 // ── History ───────────────────────────────────────────────────────────────────
 function buildHistory() {{
   const el=document.getElementById("historyContent");
-  if(!HISTORY.length){{el.innerHTML='<p class="no-games">NO COMPLETED GAMES YET</p>';return;}}
+  const games = historyFilter === "mine" && LOGGED_IN_ID
+    ? HISTORY.filter(g => g.players.some(p => p.id === LOGGED_IN_ID))
+    : HISTORY;
+  if(!games.length){{el.innerHTML='<p class="no-games">NO GAMES FOUND</p>';return;}}
   el.innerHTML="";
-  HISTORY.forEach((g,gi)=>{{
+  games.forEach((g,gi)=>{{
     const card=document.createElement("div"); card.className="game-card";
     const vBadge=victoryBadge(g.victory_type);
+    const isMine = LOGGED_IN_ID && g.players.some(p => p.id === LOGGED_IN_ID);
     const mapLabel = {{"land":"🏕️ Land","coastal":"⛵ Coastal","any":"🌐 Any","skip":"—"}}[g.map_type]||g.map_type||"";
     card.innerHTML=`
       <div class="game-header" onclick="toggleGame('hist-${{gi}}')">
@@ -852,12 +888,20 @@ function toggleGame(id) {{
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
 const authArea = document.getElementById("authArea");
+const guild = new URLSearchParams(window.location.search).get("guild") || GUILD_ID || "";
+
 if (LOGGED_IN_ID && LOGGED_IN_NAME) {{
+  const displayLabel = DISPLAY_NAME || LOGGED_IN_NAME;
+  const favLabel = FAV_CIV ? ` · ${{FAV_CIV}}` : "";
   authArea.innerHTML = `
-    <div style="display:flex;align-items:center;gap:10px">
-      <span style="font-size:11px;color:#94a3b8">👤 ${{LOGGED_IN_NAME}}</span>
+    <div style="display:flex;align-items:center;gap:8px">
+      <button class="btn btn-ghost" onclick="openSettingsModal()" style="font-size:10px;padding:4px 10px">👤 ${{displayLabel}}${{favLabel}}</button>
       <a href="/logout" style="font-size:10px;color:#475569;text-decoration:none;padding:4px 10px;border:1px solid #1e2130;border-radius:6px">logout</a>
     </div>`;
+
+  // Show history filter
+  const hf = document.getElementById("histFilter");
+  if (hf) hf.style.display = "flex";
 
   // Auto-open this player's profile
   const myIdx = PLAYERS.findIndex(p => p.id === LOGGED_IN_ID);
@@ -871,8 +915,105 @@ if (LOGGED_IN_ID && LOGGED_IN_NAME) {{
     }}, 200);
   }}
 }} else {{
-  const guild = new URLSearchParams(window.location.search).get("guild") || "";
   authArea.innerHTML = `<a href="/login?guild=${{guild}}" style="font-size:11px;color:#f97316;text-decoration:none;padding:5px 12px;border:1px solid #f97316;border-radius:6px;transition:opacity 0.15s" onmouseover="this.style.opacity=0.7" onmouseout="this.style.opacity=1">Login with Discord</a>`;
+}}
+
+// ── Settings Modal ─────────────────────────────────────────────────────────
+function openSettingsModal() {{
+  const mc = document.getElementById("modalContainer");
+  mc.innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <div class="modal-title">⚙️ My Settings</div>
+        <label class="form-label">DISPLAY NAME</label>
+        <input class="form-input" id="settingName" placeholder="Your display name" value="${{DISPLAY_NAME || LOGGED_IN_NAME}}">
+        <label class="form-label">FAVOURITE CIV</label>
+        <select class="form-select" id="settingCiv">
+          <option value="">— None —</option>
+          ${{ALL_CIVS.map(c => `<option value="${{c}}"${{c===FAV_CIV?" selected":""}}>${{c}}</option>`).join("")}}
+        </select>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+          <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+        </div>
+      </div>
+    </div>`;
+}}
+
+async function saveSettings() {{
+  const name = document.getElementById("settingName").value.trim();
+  const civ  = document.getElementById("settingCiv").value;
+  const res = await fetch("/api/prefs", {{
+    method: "POST",
+    headers: {{"Content-Type": "application/json"}},
+    body: JSON.stringify({{guild: guild, display_name: name, fav_civ: civ}})
+  }});
+  if (res.ok) {{ closeModal(); location.reload(); }}
+  else {{ alert("Failed to save settings."); }}
+}}
+
+// ── Lobby Modal ────────────────────────────────────────────────────────────
+function openLobbyModal() {{
+  if (!LOGGED_IN_ID) {{ alert("Please log in to create a lobby."); return; }}
+  const mc = document.getElementById("modalContainer");
+  mc.innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <div class="modal-title">🏛️ Create Lobby</div>
+        <label class="form-label">DIFFICULTY</label>
+        <select class="form-select" id="lobbyDiff">
+          <option value="Prince">Prince</option>
+          <option value="King">King</option>
+        </select>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+          <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="createLobby()">Create</button>
+        </div>
+      </div>
+    </div>`;
+}}
+
+async function createLobby() {{
+  const difficulty = document.getElementById("lobbyDiff").value;
+  const res = await fetch("/api/lobby/create", {{
+    method: "POST",
+    headers: {{"Content-Type": "application/json"}},
+    body: JSON.stringify({{guild: guild, difficulty}})
+  }});
+  if (res.ok) {{ closeModal(); switchTab("live"); location.reload(); }}
+  else {{ alert("Failed to create lobby."); }}
+}}
+
+async function joinLobby(hostId) {{
+  if (!LOGGED_IN_ID) {{ alert("Please log in to join a lobby."); return; }}
+  const res = await fetch("/api/lobby/join", {{
+    method: "POST",
+    headers: {{"Content-Type": "application/json"}},
+    body: JSON.stringify({{guild: guild, host_id: hostId}})
+  }});
+  if (res.ok) {{ location.reload(); }}
+  else {{ const t = await res.text(); alert("Could not join: " + t); }}
+}}
+
+async function leaveLobby(hostId) {{
+  const res = await fetch("/api/lobby/leave", {{
+    method: "POST",
+    headers: {{"Content-Type": "application/json"}},
+    body: JSON.stringify({{guild: guild, host_id: hostId}})
+  }});
+  if (res.ok) {{ location.reload(); }}
+  else {{ alert("Failed to leave lobby."); }}
+}}
+
+function closeModal() {{ document.getElementById("modalContainer").innerHTML = ""; }}
+
+// ── History filter ─────────────────────────────────────────────────────────
+let historyFilter = "all";
+function filterHistory(mode) {{
+  historyFilter = mode;
+  document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
+  event.target.classList.add("active");
+  buildHistory();
 }}
 </script>
 </body>
@@ -945,6 +1086,121 @@ async def handle_data(request):
     all_data = load_all_data()
     return web.Response(text=json.dumps(all_data), content_type="application/json")
 
+async def handle_api_prefs(request):
+    """Save display name and favourite civ for logged-in user."""
+    session_token = request.cookies.get("session")
+    if not session_token:
+        return web.Response(text="Not logged in", status=401)
+    user_id, _ = verify_session_token(session_token)
+    if not user_id:
+        return web.Response(text="Invalid session", status=401)
+    body = await request.json()
+    guild_id = body.get("guild", "")
+    display_name = body.get("display_name", "").strip()[:32]
+    fav_civ = body.get("fav_civ", "")
+    if fav_civ and fav_civ not in ALL_CIVS:
+        return web.Response(text="Invalid civ", status=400)
+    all_data = load_all_data()
+    data = get_server_data(all_data, guild_id)
+    if user_id not in data["players"]:
+        return web.Response(text="Player not found", status=404)
+    data["players"][user_id].setdefault("prefs", {})
+    if display_name:
+        data["players"][user_id]["prefs"]["display_name"] = display_name
+        data["players"][user_id]["name"] = display_name
+    data["players"][user_id]["prefs"]["fav_civ"] = fav_civ
+    save_all_data(all_data)
+    return web.Response(text="OK")
+
+async def handle_api_lobby_create(request):
+    """Create a lobby from the website."""
+    session_token = request.cookies.get("session")
+    if not session_token:
+        return web.Response(text="Not logged in", status=401)
+    user_id, username = verify_session_token(session_token)
+    if not user_id:
+        return web.Response(text="Invalid session", status=401)
+    body = await request.json()
+    guild_id = body.get("guild", "")
+    difficulty = body.get("difficulty", "Prince")
+    if difficulty not in ("Prince", "King"):
+        return web.Response(text="Invalid difficulty", status=400)
+    all_data = load_all_data()
+    data = get_server_data(all_data, guild_id)
+    if user_id in data["lobbies"]:
+        return web.Response(text="You already have an open lobby", status=400)
+    if player_in_any_lobby(data, user_id):
+        return web.Response(text="You are already in a lobby", status=400)
+    if player_in_active_game(data, user_id):
+        return web.Response(text="You are in an active game", status=400)
+    display_name = data["players"].get(user_id, {}).get("name", username)
+    get_player(data, user_id, display_name)
+    data["lobbies"][user_id] = {
+        "host": user_id, "host_name": display_name,
+        "players": [user_id], "player_names": [display_name],
+        "difficulty": difficulty, "created_at": datetime.utcnow().isoformat()
+    }
+    save_all_data(all_data)
+    return web.Response(text="OK")
+
+async def handle_api_lobby_join(request):
+    """Join a lobby from the website."""
+    session_token = request.cookies.get("session")
+    if not session_token:
+        return web.Response(text="Not logged in", status=401)
+    user_id, username = verify_session_token(session_token)
+    if not user_id:
+        return web.Response(text="Invalid session", status=401)
+    body = await request.json()
+    guild_id = body.get("guild", "")
+    host_id = body.get("host_id", "")
+    all_data = load_all_data()
+    data = get_server_data(all_data, guild_id)
+    if host_id not in data["lobbies"]:
+        return web.Response(text="Lobby not found", status=404)
+    lobby = data["lobbies"][host_id]
+    if user_id in lobby["players"]:
+        return web.Response(text="Already in lobby", status=400)
+    if player_in_any_lobby(data, user_id):
+        return web.Response(text="Already in another lobby", status=400)
+    if player_in_active_game(data, user_id):
+        return web.Response(text="Already in an active game", status=400)
+    if len(lobby["players"]) >= MAX_LOBBY_SIZE:
+        return web.Response(text="Lobby full", status=400)
+    display_name = data["players"].get(user_id, {}).get("name", username)
+    get_player(data, user_id, display_name)
+    lobby["players"].append(user_id)
+    lobby["player_names"].append(display_name)
+    save_all_data(all_data)
+    return web.Response(text="OK")
+
+async def handle_api_lobby_leave(request):
+    """Leave a lobby from the website."""
+    session_token = request.cookies.get("session")
+    if not session_token:
+        return web.Response(text="Not logged in", status=401)
+    user_id, _ = verify_session_token(session_token)
+    if not user_id:
+        return web.Response(text="Invalid session", status=401)
+    body = await request.json()
+    guild_id = body.get("guild", "")
+    host_id = body.get("host_id", "")
+    all_data = load_all_data()
+    data = get_server_data(all_data, guild_id)
+    if host_id not in data["lobbies"]:
+        return web.Response(text="Lobby not found", status=404)
+    lobby = data["lobbies"][host_id]
+    if user_id not in lobby["players"]:
+        return web.Response(text="Not in lobby", status=400)
+    if user_id == host_id:
+        del data["lobbies"][host_id]
+    else:
+        idx = lobby["players"].index(user_id)
+        lobby["players"].pop(idx)
+        lobby["player_names"].pop(idx)
+    save_all_data(all_data)
+    return web.Response(text="OK")
+
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/graph", handle_graph)
@@ -952,6 +1208,10 @@ async def start_web_server():
     app.router.add_get("/callback", handle_callback)
     app.router.add_get("/logout", handle_logout)
     app.router.add_get("/data", handle_data)
+    app.router.add_post("/api/prefs", handle_api_prefs)
+    app.router.add_post("/api/lobby/create", handle_api_lobby_create)
+    app.router.add_post("/api/lobby/join", handle_api_lobby_join)
+    app.router.add_post("/api/lobby/leave", handle_api_lobby_leave)
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(os.getenv("PORT", 8080))
