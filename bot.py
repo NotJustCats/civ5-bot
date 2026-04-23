@@ -282,6 +282,31 @@ def build_graph_html(guild_id: str) -> str:
                     if elo_after > peak_elo: peak_elo = elo_after
                     if finish == 1 and game_size >= 6: big_game_win = True
                     if game_size >= 8: played_8 = True
+        # Spider scores (0-100)
+        wins_n = p.get("wins", 0); losses_n = p.get("losses", 0); total_n = wins_n + losses_n
+        spider_wr = round(wins_n / total_n * 100) if total_n > 0 else 0
+        spider_variety = min(100, round(len(unique_civs) / 20 * 100))
+        map_total_n = coastal_games + land_games
+        spider_coastal = round(coastal_games / map_total_n * 100) if map_total_n > 0 else 0
+        bg_wins = bg_total = 0
+        for m in sorted_matches:
+            if m.get("type") in ("reset", None): continue
+            gps = m.get("players", [])
+            if len(gps) >= 5:
+                for mp in gps:
+                    if mp["id"] == pid:
+                        bg_total += 1
+                        if mp.get("finish") == 1: bg_wins += 1
+        spider_biggame = round(bg_wins / bg_total * 100) if bg_total > 0 else 0
+        elo_changes = []
+        for m in sorted_matches:
+            if m.get("type") in ("reset", None): continue
+            for mp in m.get("players", []):
+                if mp["id"] == pid:
+                    elo_changes.append(mp.get("elo_after", 1000) - mp.get("elo_before", 1000))
+        avg_elo_change = sum(elo_changes) / len(elo_changes) if elo_changes else 0
+        spider_growth = max(0, min(100, round(avg_elo_change * 4 + 50)))
+
         lb_data[pid] = {
             "wins": p.get("wins", 0), "losses": p.get("losses", 0),
             "top_civs": [{"civ": c, "wins": v["wins"], "losses": v["losses"]} for c, v in top_p_civs],
@@ -289,6 +314,7 @@ def build_graph_html(guild_id: str) -> str:
             "unique_civs": len(unique_civs), "win_civs": len(win_civs),
             "peak_elo": peak_elo, "big_game_win": big_game_win, "played_8": played_8,
             "victory_counts": victory_counts, "difficulty_wins": difficulty_wins,
+            "spider": {"win_rate": spider_wr, "civ_variety": spider_variety, "coastal_mastery": spider_coastal, "big_game": spider_biggame, "elo_growth": spider_growth},
         }
 
     # History data (most recent first)
@@ -635,8 +661,32 @@ function showProfile(p, idx) {{
     <div style="font-size:10px;color:#64748b;letter-spacing:1px;margin-bottom:6px">TOP CIVS BY WIN RATE</div>
     ${{civRows}}
     <div style="font-size:10px;color:#64748b;letter-spacing:1px;margin:14px 0 6px">ACHIEVEMENTS (${{unlocked}}/${{ACHIEVEMENTS.length}})</div>
+    <div style="position:relative;height:190px;margin-bottom:14px"><canvas id="spiderChart"></canvas></div>
     ${{achRows}}`;
   pieCard.style.display="none"; lbCard.style.display="none"; profileCard.style.display="flex";
+
+  // Render spider chart
+  const spider = d.spider || {{}};
+  const spiderCanvas = document.getElementById("spiderChart");
+  if (spiderCanvas) {{
+    if (window._spiderChart) {{ window._spiderChart.destroy(); window._spiderChart = null; }}
+    window._spiderChart = new Chart(spiderCanvas.getContext("2d"), {{
+      type: "radar",
+      data: {{
+        labels: ["Win Rate","Civ Variety","Coastal","Big Game","Elo Growth"],
+        datasets: [{{
+          data: [spider.win_rate||0, spider.civ_variety||0, spider.coastal_mastery||0, spider.big_game||0, spider.elo_growth||50],
+          backgroundColor: color + "33", borderColor: color, borderWidth: 2,
+          pointBackgroundColor: color, pointRadius: 3,
+        }}]
+      }},
+      options: {{
+        responsive: true, maintainAspectRatio: false,
+        scales: {{ r: {{ min:0, max:100, ticks:{{display:false}}, grid:{{color:"#1e2130"}}, angleLines:{{color:"#1e2130"}}, pointLabels:{{color:"#64748b",font:{{family:"IBM Plex Mono",size:9}}}} }} }},
+        plugins: {{ legend:{{display:false}}, tooltip:{{backgroundColor:"#0f1117",borderColor:"#2a2d3a",borderWidth:1,titleColor:"#64748b",bodyColor:"#e2e8f0",titleFont:{{family:"IBM Plex Mono",size:10}},bodyFont:{{family:"IBM Plex Mono",size:11}}}} }}
+      }}
+    }});
+  }}
 }}
 
 function closeProfile() {{ activeProfile=null; document.querySelectorAll(".player-btn").forEach(b=>b.classList.remove("profile-active")); hideProfile(); }}
