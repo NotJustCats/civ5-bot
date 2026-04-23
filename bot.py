@@ -14,7 +14,7 @@ from typing import Optional
 
 # ── Config ──────────────────────────────────────────────────────────────────
 TOKEN = os.getenv("DISCORD_TOKEN")
-DATA_FILE = "ranked_data.json"
+DATA_FILE = os.getenv("DATA_FILE", "ranked_data.json")
 STARTING_ELO = 1000
 K_FACTOR = 48
 MAX_LOBBY_SIZE = 8
@@ -591,6 +591,42 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
     transition: transform 0.08s ease, border-color 0.2s, box-shadow 0.2s;
     will-change: transform;
   }}
+  /* ── Draft Table ── */
+  .tbl-wrap {{ position:relative; flex-shrink:0; transition: transform 0.5s cubic-bezier(0.4,0,0.2,1); }}
+  .tbl-felt {{ position:absolute;inset:0;border-radius:50%;
+    background:radial-gradient(ellipse 70% 60% at 50% 40%,#1a3a24 0%,#0e2018 50%,#071410 100%);
+    border:3px solid #2a4a30;
+    box-shadow:0 0 0 8px #0a1a0f,0 0 0 10px #1e3020,0 40px 120px rgba(0,0,0,0.8),inset 0 0 80px rgba(0,0,0,0.4); }}
+  .tbl-deck {{ position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:52px;height:74px;z-index:10; }}
+  .tbl-deck-card {{ position:absolute;inset:0;border-radius:6px;background:linear-gradient(135deg,#1a1a2e,#0f0f1a);border:1px solid #2a2a4a;box-shadow:0 2px 6px rgba(0,0,0,0.6); }}
+  .tbl-deck-card:nth-child(1){{transform:translate(-2px,-2px) rotate(-2deg)}}
+  .tbl-deck-card:nth-child(2){{transform:translate(-1px,-1px) rotate(-1deg)}}
+  .tbl-deck-label {{ position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:'Cinzel',serif;font-size:8px;color:#4a4a7a;letter-spacing:1px;text-align:center;line-height:1.4;z-index:1; }}
+  .tbl-seat {{ position:absolute;display:flex;flex-direction:column;align-items:center;transform-origin:50% 50%;z-index:5; }}
+  .tbl-hand {{ position:relative;width:180px;height:90px;display:flex;align-items:flex-end;justify-content:center; }}
+  .tbl-label {{ font-size:9px;font-weight:600;letter-spacing:1px;text-align:center;background:rgba(0,0,0,0.7);padding:3px 10px;border-radius:12px;border:1px solid rgba(255,255,255,0.1);white-space:nowrap;margin-top:6px; }}
+  .tbl-status {{ font-size:8px;letter-spacing:1px;opacity:0.6;margin-top:2px;text-align:center; }}
+  .tbl-card {{ position:absolute;width:52px;height:74px;border-radius:6px;cursor:pointer;transform-origin:center bottom;z-index:2;box-shadow:0 3px 12px rgba(0,0,0,0.6);user-select:none;bottom:0;left:50%;margin-left:-26px; }}
+  .tbl-card-face {{ position:absolute;inset:0;border-radius:6px;padding:5px 4px;display:flex;flex-direction:column;overflow:hidden; }}
+  .tbl-card-type {{ font-size:6px;letter-spacing:1px;margin-bottom:2px;font-weight:600; }}
+  .tbl-card-name {{ font-family:'Cinzel',serif;font-size:7px;font-weight:700;line-height:1.2;color:#e2e8f0;margin-bottom:2px; }}
+  .tbl-card-desc {{ font-size:5px;color:#94a3b8;line-height:1.4;flex:1;overflow:hidden; }}
+  .tbl-card-icon {{ font-size:12px;text-align:center;margin-top:auto;padding-top:2px; }}
+  .tbl-card.chosen {{ box-shadow:0 0 0 2px #22c55e,0 4px 16px rgba(34,197,94,0.5)!important;z-index:15; }}
+  .tbl-controls {{ position:absolute;bottom:20px;left:50%;transform:translateX(-50%);display:flex;gap:8px;z-index:50;align-items:center; }}
+  .tbl-rotate-ring {{ display:flex;gap:6px;align-items:center;background:rgba(10,12,18,0.9);border:1px solid #1e2130;border-radius:12px;padding:6px 12px;backdrop-filter:blur(8px); }}
+  .tbl-rotate-ring span {{ font-size:9px;color:#475569; }}
+  .tbl-rot-btn {{ width:28px;height:28px;border-radius:50%;border:1px solid #1e2130;background:transparent;color:#94a3b8;font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.15s; }}
+  .tbl-rot-btn:hover {{ border-color:#f97316;color:#f97316; }}
+  .tbl-info {{ position:absolute;top:16px;left:50%;transform:translateX(-50%);background:rgba(10,12,18,0.9);border:1px solid #1e2130;border-radius:10px;padding:8px 18px;font-size:10px;color:#475569;z-index:50;text-align:center;backdrop-filter:blur(8px);letter-spacing:1px;white-space:nowrap; }}
+  /* Card modal */
+  .tbl-modal {{ display:none;position:absolute;inset:0;z-index:200;background:rgba(0,0,0,0.75);align-items:center;justify-content:center;backdrop-filter:blur(4px); }}
+  .tbl-modal.open {{ display:flex; }}
+  .tbl-modal-card {{ background:linear-gradient(145deg,#0f1420,#080a0f);border:1px solid #2a3040;border-radius:14px;padding:24px;width:280px;box-shadow:0 24px 80px rgba(0,0,0,0.8);position:relative;animation:tblPopIn 0.2s cubic-bezier(0.34,1.56,0.64,1); }}
+  @keyframes tblPopIn {{ from{{transform:scale(0.85);opacity:0}} to{{transform:scale(1);opacity:1}} }}
+  .tbl-modal-close {{ position:absolute;top:12px;right:12px;background:transparent;border:1px solid #1e2130;color:#475569;border-radius:6px;padding:2px 8px;font-family:inherit;font-size:10px;cursor:pointer; }}
+  .tbl-modal-close:hover {{ color:#f97316;border-color:#f97316; }}
+
   .civ-tile:hover {{ border-color: #2a3040; box-shadow: 0 16px 48px rgba(0,0,0,0.5); }}
   /* Tier backgrounds */
   .tier-bronze {{ background: linear-gradient(160deg, #1a0e05 0%, #0d0805 40%, #1a1005 100%); border-color: #7c4a1e; }}
@@ -681,7 +717,7 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
   <div class="tab" onclick="switchTab('live')">LIVE GAMES</div>
   <div class="tab" onclick="switchTab('history')">HISTORY</div>
   <div class="tab" id="hostTab" onclick="switchTab('host')" style="display:none">HOST GAME</div>
-  <div class="tab" onclick="switchTab('civpedia')">CIVILOPEDIA</div>
+  <div class="tab" id="civpediaTab" onclick="handleCivpediaClick()">CIVILOPEDIA</div>
 </div>
 
 <!-- STATS PAGE -->
@@ -730,6 +766,15 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
 <!-- LIVE GAMES PAGE -->
 <div class="page" id="page-live">
   <div class="scroll-page" id="liveContent"></div>
+</div>
+
+<!-- TABLE OVERLAY (hidden, triggered by triple-click on CIVILOPEDIA tab) -->
+<div id="tableOverlay" style="display:none;position:fixed;inset:0;z-index:400;background:#05080d;flex-direction:column;overflow:hidden">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #1e2130;flex-shrink:0">
+    <div style="font-family:'Cinzel',serif;font-size:16px;color:#f97316;letter-spacing:3px">🃏 DRAFT TABLE</div>
+    <button onclick="closeTableOverlay()" style="background:transparent;border:1px solid #1e2130;color:#475569;border-radius:8px;padding:5px 14px;font-family:inherit;font-size:11px;cursor:pointer;transition:all 0.15s" onmouseover="this.style.color='#f97316';this.style.borderColor='#f97316'" onmouseout="this.style.color='#475569';this.style.borderColor='#1e2130'">✕ Close</button>
+  </div>
+  <div id="tablePageContent" style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;position:relative;overflow:hidden"></div>
 </div>
 
 <!-- HISTORY PAGE -->
@@ -1670,6 +1715,435 @@ document.addEventListener("click", e => {{
   }}
 }});
 
+
+// ════════════════════════════════════════════════════════════════════════════
+// DRAFT TABLE
+// ════════════════════════════════════════════════════════════════════════════
+let _tbl = {{
+  rotation: 0, dealt: false,
+  chosen: [], cardEls: [],
+  size: 0, players: [],
+  pools: [],
+}};
+
+const COASTAL_POOL = ["Australia","Brunei","Carthage","Chile","Denmark","England","Indonesia","Japan","Kilwa","Korea","Netherlands","Norway","Oman","Philippines","Phoenicia","Polynesia","Portugal","Spain","Tonga","Tunisia","UAE","Venice"];
+
+function tblSeatAngle(i, n) {{ return (90 + (360/n)*i) % 360; }}
+function tblSeatPos(i, n) {{
+  const R = Math.min(190, 80 + n * 18);
+  const a = tblSeatAngle(i,n) * Math.PI / 180;
+  const C = 270;
+  return {{ x: C + R*Math.cos(a), y: C + R*Math.sin(a), rot: tblSeatAngle(i,n) - 90 }};
+}}
+
+function tblFanTransform(ci, total) {{
+  const spread = 24; const n = total;
+  const angle = (ci - (n-1)/2) * (spread/(n-1||1));
+  const lift  = Math.abs(ci - (n-1)/2) * 4;
+  const xOff  = (ci - (n-1)/2) * 15;
+  return {{ angle, lift, xOff, css: `translateX(${{xOff}}px) translateY(${{lift}}px) rotate(${{angle}}deg)` }};
+}}
+
+function buildTablePage() {{
+  const container = document.getElementById("tablePageContent");
+  container.innerHTML = "";
+  _tbl = {{ rotation:0, dealt:false, chosen:[], cardEls:[], size:0, players:[], pools:[] }};
+
+  // Check if user is in a live lobby
+  const myLobby = LIVE_GAMES.find(g => g.status==="lobby" && (
+    !LOGGED_IN_ID || g.players.some(p => p.id===LOGGED_IN_ID)
+  ));
+
+  if (!LOGGED_IN_ID) {{
+    // Demo mode — show fake 5-player table
+    _tbl.players = [
+      {{name:"You",color:"#f97316",id:"demo0"}},
+      {{name:"Player 2",color:"#3b82f6",id:"demo1"}},
+      {{name:"Player 3",color:"#a855f7",id:"demo2"}},
+      {{name:"Player 4",color:"#22c55e",id:"demo3"}},
+      {{name:"Player 5",color:"#ef4444",id:"demo4"}},
+    ];
+    _tbl.pools = tblMakePools(_tbl.players.length, "any");
+    _tbl.isDemo = true;
+    renderTable(container);
+    return;
+  }}
+
+  if (!myLobby) {{
+    // Lobby browser
+    renderLobbyBrowser(container);
+    return;
+  }}
+
+  // Real lobby
+  _tbl.lobbyId = myLobby.host_id;
+  _tbl.mapType = myLobby.map_type || "any";
+  _tbl.isHost  = myLobby.host_id === LOGGED_IN_ID;
+  _tbl.status  = myLobby.status;
+  _tbl.players = myLobby.players.map(p => ({{
+    name: p.display_name||p.name, color: getPlayerColour(p.id), id: p.id,
+    ready: p.ready||false, chosen: p.chosen||null,
+  }}));
+
+  if (myLobby.status === "lobby") {{
+    _tbl.pools = tblMakePools(_tbl.players.length, _tbl.mapType);
+    renderTable(container);
+  }} else {{
+    // Draft phase — use actual pools from game
+    _tbl.pools = myLobby.players.map(p => (p.pool||[]).map(civName => tblCivData(civName)));
+    _tbl.dealt = true;
+    _tbl.chosen = _tbl.players.map(p => p.chosen ? _tbl.players.indexOf(p) : null);
+    renderTable(container);
+    // Re-render cards into hands
+    setTimeout(() => tblRestoreDraft(), 100);
+  }}
+}}
+
+function tblMakePools(n, mapType) {{
+  // Pick civs from pool — same logic as server draft
+  const coastal = COASTAL_POOL;
+  const all = Object.keys(CIVPEDIA);
+  const land = all.filter(c => !coastal.includes(c));
+  const pool = mapType==="coastal" ? coastal : mapType==="land" ? land : all;
+  const shuffled = [...pool].sort(()=>Math.random()-0.5);
+  const DRAFT_SIZE = 5;
+  return Array.from({{length:n}}, (_,i) =>
+    shuffled.slice(i*DRAFT_SIZE, (i+1)*DRAFT_SIZE).map(civName => tblCivData(civName))
+  );
+}}
+
+function tblCivData(civName) {{
+  const civ = CIVPEDIA[civName] || {{}};
+  const isCoastal = COASTAL_CIVS.has(civName);
+  const ability = (civ.entries||[]).find(e=>e.type==="Ability");
+  return {{
+    name: civName,
+    leader: civ.leader||"",
+    type: isCoastal ? "COASTAL" : "LAND",
+    desc: ability ? ability.desc : "",
+    abilityName: ability ? ability.name : "",
+    icon: isCoastal ? "⛵" : "🏕️",
+    color: isCoastal ? "#3b82f6" : "#ef4444",
+    entries: civ.entries||[],
+  }};
+}}
+
+function renderLobbyBrowser(container) {{
+  const lobbies = LIVE_GAMES.filter(g => g.status==="lobby");
+  container.innerHTML = `
+    <div style="width:420px">
+      <div style="font-family:'Cinzel',serif;font-size:22px;color:#f97316;letter-spacing:3px;margin-bottom:6px;text-align:center">🃏 DRAFT TABLE</div>
+      <div style="font-size:10px;color:#475569;text-align:center;margin-bottom:24px;letter-spacing:2px">JOIN A TABLE OR CREATE ONE</div>
+
+      ${{lobbies.length ? `<div style="font-size:9px;color:#475569;letter-spacing:2px;margin-bottom:10px">OPEN TABLES</div>
+        ${{lobbies.map(g => `
+          <div style="background:#0d1017;border:1px solid #1e2130;border-radius:10px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between">
+            <div>
+              <div style="font-size:12px;font-weight:700;color:#e2e8f0;margin-bottom:4px">${{g.host_name||"Table"}}'s Table</div>
+              <div style="font-size:10px;color:#475569">${{g.players.length}}/${{g.max_players||8}} players &nbsp;·&nbsp; ${{(g.map_type||"any").toUpperCase()}} maps</div>
+            </div>
+            <button class="btn btn-ghost" style="font-size:10px" onclick="tblJoinLobby('${{g.host_id}}')">JOIN</button>
+          </div>`).join("")}}` : `<div style="text-align:center;color:#334155;padding:32px;font-size:11px">No open tables</div>`}}
+
+      <div style="margin-top:16px;background:#0d1017;border:1px solid #1e2130;border-radius:10px;padding:16px">
+        <div style="font-size:9px;color:#475569;letter-spacing:2px;margin-bottom:12px">CREATE TABLE</div>
+        <select id="tblMapType" class="form-select" style="margin-bottom:10px">
+          <option value="any">Any Maps</option>
+          <option value="land">Land Only</option>
+          <option value="coastal">Coastal Only</option>
+        </select>
+        <button class="btn btn-orange" style="width:100%" onclick="tblCreateLobby()">Create Table</button>
+      </div>
+    </div>`;
+}}
+
+async function tblCreateLobby() {{
+  const mapType = document.getElementById("tblMapType").value;
+  const res = await fetch("/api/lobby/create", {{
+    method:"POST", headers:{{"Content-Type":"application/json"}},
+    body: JSON.stringify({{guild, map_type: mapType}})
+  }});
+  if (res.ok) {{ refreshPage(); switchTab("table"); }}
+  else alert("Could not create table: " + await res.text());
+}}
+
+async function tblJoinLobby(hostId) {{
+  const res = await fetch("/api/lobby/join", {{
+    method:"POST", headers:{{"Content-Type":"application/json"}},
+    body: JSON.stringify({{guild, host_id: hostId}})
+  }});
+  if (res.ok) {{ refreshPage(); switchTab("table"); }}
+  else alert("Could not join: " + await res.text());
+}}
+
+function renderTable(container) {{
+  const n = _tbl.players.length;
+  const SIZE = 540;
+  const C = SIZE/2;
+
+  container.innerHTML = `
+    <div class="tbl-info" id="tblInfo">
+      <strong>DRAFT TABLE</strong> &nbsp;·&nbsp; ↺↻ Rotate to read all hands &nbsp;·&nbsp; Click card to inspect
+    </div>
+    <div class="tbl-wrap" id="tblWrap" style="width:${{SIZE}}px;height:${{SIZE}}px">
+      <div class="tbl-felt"></div>
+      <div class="tbl-deck" id="tblDeck">
+        <div class="tbl-deck-card"></div>
+        <div class="tbl-deck-card"></div>
+        <div class="tbl-deck-card"><div class="tbl-deck-label">DRAFT<br>DECK</div></div>
+      </div>
+    </div>
+    <div class="tbl-modal" id="tblModal">
+      <div class="tbl-modal-card" id="tblModalContent"></div>
+    </div>
+    <div class="tbl-controls">
+      <div class="tbl-rotate-ring">
+        <button class="tbl-rot-btn" onclick="tblRotate(-45)">↺</button>
+        <span>ROTATE</span>
+        <button class="tbl-rot-btn" onclick="tblRotate(45)">↻</button>
+      </div>
+      ${{!_tbl.dealt ? `<button class="btn btn-orange" id="tblDealBtn" onclick="tblDeal()">🃏 Deal Cards</button>` : ""}}
+      ${{_tbl.isDemo ? `<button class="btn btn-ghost" onclick="buildTablePage()">↺ Reset</button>` : ""}}
+      ${{_tbl.isHost && !_tbl.dealt ? `<button class="btn btn-ghost" onclick="tblStartGame()">▶ Start Game</button>` : ""}}
+    </div>`;
+
+  // Build seats
+  const wrap = document.getElementById("tblWrap");
+  _tbl.cardEls = _tbl.players.map(() => []);
+  _tbl.chosen  = _tbl.players.map(() => null);
+
+  _tbl.players.forEach((p, i) => {{
+    const {{x, y, rot}} = tblSeatPos(i, n);
+    const seat = document.createElement("div");
+    seat.className = "tbl-seat";
+    seat.id = `tblSeat-${{i}}`;
+    seat.style.cssText = `left:${{x}}px;top:${{y}}px;transform:translate(-50%,-50%) rotate(${{rot}}deg)`;
+
+    const hand = document.createElement("div");
+    hand.className = "tbl-hand"; hand.id = `tblHand-${{i}}`;
+
+    const label = document.createElement("div");
+    label.className = "tbl-label";
+    label.style.color = p.color; label.textContent = p.name;
+
+    const status = document.createElement("div");
+    status.className = "tbl-status"; status.id = `tblStatus-${{i}}`;
+    status.textContent = i===0 && !_tbl.isDemo ? "YOU" : "waiting";
+
+    seat.appendChild(hand);
+    seat.appendChild(label);
+    seat.appendChild(status);
+    wrap.appendChild(seat);
+  }});
+
+  // Modal close
+  document.getElementById("tblModal").addEventListener("click", e => {{
+    if (e.target === document.getElementById("tblModal")) tblCloseModal();
+  }});
+
+  if (_tbl.dealt) tblRestoreDraft();
+}}
+
+function tblMakeCard(civ, pi, ci) {{
+  const isMe = pi === 0;
+  const fan  = tblFanTransform(ci, _tbl.pools[pi].length);
+  const card = document.createElement("div");
+  card.className = "tbl-card";
+  card.dataset.pi = pi; card.dataset.ci = ci;
+  card.style.cssText = `background:linear-gradient(145deg,${{civ.color}}18,#0f0f1a);border:1px solid ${{civ.color}}44;transform:${{fan.css}};`;
+
+  card.innerHTML = `<div class="tbl-card-face">
+    <div class="tbl-card-type" style="color:${{civ.color}}">${{civ.icon}} ${{civ.type}}</div>
+    <div class="tbl-card-name">${{civ.name}}</div>
+    <div class="tbl-card-desc">${{civ.abilityName||civ.desc}}</div>
+    <div class="tbl-card-icon">${{civ.icon}}</div>
+  </div>`;
+
+  card.addEventListener("mouseenter", () => {{
+    if (card.classList.contains("chosen")) return;
+    card.style.transform = `translateX(${{fan.xOff}}px) translateY(${{fan.lift+24}}px) rotate(${{fan.angle}}deg)`;
+    card.style.zIndex = 20;
+    card.style.boxShadow = `0 8px 28px ${{civ.color}}66`;
+    card.style.transition = "transform 0.18s ease,box-shadow 0.18s,z-index 0s";
+  }});
+  card.addEventListener("mouseleave", () => {{
+    if (card.classList.contains("chosen")) return;
+    card.style.transform = fan.css; card.style.zIndex=2; card.style.boxShadow="";
+  }});
+  card.addEventListener("click", e => {{ e.stopPropagation(); tblOpenModal(civ, pi, ci, fan.css); }});
+  return card;
+}}
+
+function tblDeal() {{
+  if (_tbl.dealt) return;
+  _tbl.dealt = true;
+  const btn = document.getElementById("tblDealBtn");
+  if (btn) {{ btn.disabled=true; btn.style.opacity="0.4"; }}
+  document.getElementById("tblInfo").innerHTML = "<strong>DRAFT IN PROGRESS</strong> &nbsp;·&nbsp; ↺↻ Rotate &nbsp;·&nbsp; Click to inspect &amp; pick";
+
+  _tbl.players.forEach((p, pi) => {{
+    const hand = document.getElementById(`tblHand-${{pi}}`);
+    _tbl.pools[pi].forEach((civ, ci) => {{
+      setTimeout(() => {{
+        const card = tblMakeCard(civ, pi, ci);
+        const fan  = tblFanTransform(ci, _tbl.pools[pi].length);
+        card.style.opacity="0";
+        card.style.transform=`translateX(0) translateY(0) scale(0.3)`;
+        card.style.transition="none";
+        hand.appendChild(card);
+        _tbl.cardEls[pi].push(card);
+        requestAnimationFrame(()=>requestAnimationFrame(()=>{{
+          card.style.transition="transform 0.45s cubic-bezier(0.34,1.4,0.64,1),opacity 0.3s ease";
+          card.style.opacity="1";
+          card.style.transform=fan.css;
+        }}));
+      }}, (pi*5+ci)*85);
+    }});
+  }});
+}}
+
+function tblRestoreDraft() {{
+  _tbl.players.forEach((p,pi) => {{
+    const hand = document.getElementById(`tblHand-${{pi}}`);
+    if (!hand) return;
+    _tbl.pools[pi].forEach((civ,ci) => {{
+      const card = tblMakeCard(civ,pi,ci);
+      const fan  = tblFanTransform(ci,_tbl.pools[pi].length);
+      card.style.transform=fan.css;
+      hand.appendChild(card);
+      _tbl.cardEls[pi].push(card);
+      if (p.chosen && p.chosen===civ.name) tblApplyChosen(pi,ci);
+    }});
+  }});
+}}
+
+function tblOpenModal(civ, pi, ci, fanCss) {{
+  const isMe = pi === 0 || (_tbl.isDemo && pi===0);
+  const alreadyPicked = _tbl.chosen[pi] !== null;
+  const canPick = (isMe || _tbl.isDemo&&pi===0) && !alreadyPicked;
+
+  // Build full civilopedia sections
+  const entries = (civ.entries||[]).filter(e=>e.type!=="Bias");
+  const sections = entries.map(e=>{{
+    const color = TYPE_COLORS[e.type]||"#94a3b8";
+    const icon  = CIVPEDIA_ICONS[e.type]||"•";
+    const desc  = (e.desc||"").replace(/\(vs\. [\d\.]+\)/g,m=>`<span style="color:#64748b">${{m}}</span>`)
+                              .replace(/\(from [\d\.]+[^)]*\)/g,m=>`<span style="color:#64748b">${{m}}</span>`);
+    return `<div style="margin-bottom:10px;padding:10px;background:#080a0f;border:1px solid #1e2130;border-radius:8px;border-left:3px solid ${{color}}">
+      <div style="font-size:8px;color:${{color}};letter-spacing:2px;margin-bottom:3px">${{icon}} ${{e.type.toUpperCase()}}</div>
+      ${{e.name?`<div style="font-size:12px;font-weight:700;color:#e2e8f0;margin-bottom:4px">${{e.name}}</div>`:""}}
+      ${{desc?`<div style="font-size:10px;color:#94a3b8;line-height:1.7">${{desc}}</div>`:""}}
+    </div>`;
+  }}).join("");
+
+  document.getElementById("tblModalContent").innerHTML = `
+    <button class="tbl-modal-close" onclick="tblCloseModal()">✕</button>
+    <div style="font-size:9px;color:${{civ.color}};letter-spacing:2px;margin-bottom:6px">${{civ.icon}} ${{civ.type}}</div>
+    <div style="font-family:'Cinzel',serif;font-size:20px;font-weight:700;color:#e2e8f0;margin-bottom:3px">${{civ.name}}</div>
+    <div style="font-size:10px;color:#475569;margin-bottom:14px;letter-spacing:1px">Leader: ${{civ.leader}}</div>
+    <div style="max-height:340px;overflow-y:auto;margin-bottom:14px">${{sections}}</div>
+    ${{canPick
+      ? `<button class="btn btn-orange" style="width:100%" onclick="tblPickFromModal(${{pi}},${{ci}})">⚔️ Pick ${{civ.name}}</button>`
+      : `<button class="btn btn-ghost" style="width:100%;opacity:0.4;cursor:not-allowed" disabled>${{alreadyPicked&&_tbl.chosen[pi]===ci?"✓ Your pick":isMe?"Already picked":`${{_tbl.players[pi].name}}'s card`}}</button>`
+    }}`;
+
+  document.getElementById("tblModal").classList.add("open");
+}}
+
+function tblCloseModal() {{ document.getElementById("tblModal").classList.remove("open"); }}
+
+function tblPickFromModal(pi, ci) {{ tblCloseModal(); tblPickCard(pi, ci); }}
+
+function tblPickCard(pi, ci) {{
+  if (_tbl.chosen[pi] !== null) return;
+  _tbl.chosen[pi] = ci;
+  tblApplyChosen(pi, ci);
+
+  if (_tbl.isDemo && pi===0) tblSimulateOthers();
+  else if (!_tbl.isDemo) tblSendPick(ci);
+  tblCheckAllPicked();
+}}
+
+function tblApplyChosen(pi, ci) {{
+  const fan = tblFanTransform(ci, _tbl.pools[pi].length);
+  _tbl.cardEls[pi].forEach((c,idx) => {{
+    if (idx!==ci) {{ c.style.opacity="0.2"; c.style.pointerEvents="none"; }}
+  }});
+  const chosen_card = _tbl.cardEls[pi][ci];
+  if (!chosen_card) return;
+  chosen_card.style.transition="transform 0.4s cubic-bezier(0.34,1.2,0.64,1),box-shadow 0.3s";
+  chosen_card.style.transform=`translateX(${{fan.xOff}}px) translateY(${{fan.lift+60}}px) rotate(${{fan.angle}}deg)`;
+  chosen_card.style.boxShadow=`0 0 0 2px ${{_tbl.players[pi].color}},0 6px 24px ${{_tbl.players[pi].color}}66`;
+  chosen_card.style.zIndex=15;
+  chosen_card.classList.add("chosen");
+  const s = document.getElementById(`tblStatus-${{pi}}`);
+  if (s) {{ s.textContent=`✓ ${{_tbl.pools[pi][ci].name}}`; s.style.color=_tbl.players[pi].color; s.style.opacity="1"; }}
+}}
+
+function tblSimulateOthers() {{
+  _tbl.players.forEach((_,pi) => {{
+    if (pi===0) return;
+    setTimeout(() => tblPickCard(pi, Math.floor(Math.random()*_tbl.pools[pi].length)),
+      800 + Math.random()*2200);
+  }});
+}}
+
+async function tblSendPick(ci) {{
+  const civ = _tbl.pools[0][ci];
+  await fetch("/api/game/pick", {{
+    method:"POST", headers:{{"Content-Type":"application/json"}},
+    body: JSON.stringify({{guild, host_id: _tbl.lobbyId, civ: civ.name}})
+  }});
+}}
+
+async function tblStartGame() {{
+  const res = await fetch("/api/game/start", {{
+    method:"POST", headers:{{"Content-Type":"application/json"}},
+    body: JSON.stringify({{guild, host_id: _tbl.lobbyId, map_type: _tbl.mapType}})
+  }});
+  if (res.ok) {{
+    // Deal cards immediately without reload
+    _tbl.dealt = true;
+    const btn = document.getElementById("tblDealBtn");
+    if (btn) {{ btn.disabled=true; btn.style.opacity="0.4"; }}
+    document.getElementById("tblInfo").innerHTML =
+      "<strong>DRAFT IN PROGRESS</strong> &nbsp;·&nbsp; ↺↻ Rotate &nbsp;·&nbsp; Click to inspect &amp; pick";
+    _tbl.players.forEach((p,pi) => {{
+      const hand = document.getElementById(`tblHand-${{pi}}`);
+      _tbl.pools[pi].forEach((civ,ci) => {{
+        setTimeout(() => {{
+          const card = tblMakeCard(civ,pi,ci);
+          const fan  = tblFanTransform(ci,_tbl.pools[pi].length);
+          card.style.opacity="0"; card.style.transform="translateX(0) translateY(0) scale(0.3)"; card.style.transition="none";
+          hand.appendChild(card); _tbl.cardEls[pi].push(card);
+          requestAnimationFrame(()=>requestAnimationFrame(()=>{{
+            card.style.transition="transform 0.45s cubic-bezier(0.34,1.4,0.64,1),opacity 0.3s ease";
+            card.style.opacity="1"; card.style.transform=fan.css;
+          }}));
+        }}, (pi*5+ci)*85);
+      }});
+    }});
+  }} else alert("Could not start: " + await res.text());
+}}
+
+function tblCheckAllPicked() {{
+  if (_tbl.chosen.every(c=>c!==null)) {{
+    setTimeout(()=>{{
+      document.getElementById("tblInfo").innerHTML =
+        "<strong style=\"color:#22c55e\">✓ ALL PLAYERS PICKED</strong> &nbsp;·&nbsp; " +
+        (_tbl.isHost ? "Report results below" : "Waiting for host to start");
+      if (_tbl.isHost) buildTblReportUI();
+    }}, 400);
+  }}
+}}
+
+function tblRotate(deg) {{
+  _tbl.rotation += deg;
+  const wrap = document.getElementById("tblWrap");
+  if (wrap) wrap.style.transform = `rotate(${{_tbl.rotation}}deg)`;
+}}
+
+// ════════════════════════════════════════════════════════════════════════════
 // ── Host Game Page ────────────────────────────────────────────────────────────
 function buildHostPage() {{
   const el = document.getElementById("hostContent");
@@ -2294,6 +2768,118 @@ function closeEggCard(event) {{
 
 function closeEgg() {{
   document.getElementById("easterEgg").style.display = "none";
+}}
+
+// ── Civilopedia triple-click → Table Overlay ──────────────────────────────────
+let _civTabClicks = 0, _civTabTimer = null;
+function handleCivpediaClick() {{
+  _civTabClicks++;
+  clearTimeout(_civTabTimer);
+  if (_civTabClicks === 3) {{
+    _civTabClicks = 0;
+    openTableOverlay();
+    return;
+  }}
+  _civTabTimer = setTimeout(() => {{
+    if (_civTabClicks === 1) switchTab("civpedia");
+    _civTabClicks = 0;
+  }}, 350);
+}}
+
+let _tblPollInterval = null;
+function openTableOverlay() {{
+  const overlay = document.getElementById("tableOverlay");
+  overlay.style.display = "flex";
+  buildTablePage();
+  // Poll every 5s to keep table live
+  clearInterval(_tblPollInterval);
+  _tblPollInterval = setInterval(async () => {{
+    try {{
+      const res = await fetch("/data");
+      const all = await res.json();
+      const serverData = all[GUILD_ID] || {{}};
+      const groups = serverData.game_groups || {{}};
+      const lobbies = serverData.lobbies || {{}};
+      const newLive = [];
+      for (const [gid, grp] of Object.entries(groups)) {{
+        const picks = grp.picks || {{}};
+        const draft = grp.draft || {{}};
+        const ps = (grp.players||[]).map((pid,i) => ({{
+          id:pid, name:(grp.player_names||[])[i]||pid,
+          display_name:(grp.player_names||[])[i]||pid,
+          chosen:picks[pid]||null, pool:draft[pid]||[]
+        }}));
+        newLive.push({{host_id:gid,status:"active",map_type:grp.map_type||"any",difficulty:grp.difficulty||"Prince",players:ps}});
+      }}
+      for (const [hid, lob] of Object.entries(lobbies)) {{
+        const pids = lob.players||[]; const pnames = lob.player_names||[];
+        newLive.push({{host_id:hid,host_name:lob.host_name,status:"lobby",map_type:lob.map_type||"any",difficulty:lob.difficulty||"Prince",
+          players:pids.map((pid,i)=>({{id:pid,name:pnames[i]||pid,display_name:pnames[i]||pid,chosen:null,pool:[]}}))
+        }});
+      }}
+      LIVE_GAMES.length=0; newLive.forEach(g=>LIVE_GAMES.push(g));
+      // Refresh table if in lobby phase (not yet dealt)
+      if (!_tbl.dealt) buildTablePage();
+    }} catch(e) {{}}
+  }}, 5000);
+}}
+
+function closeTableOverlay() {{
+  document.getElementById("tableOverlay").style.display = "none";
+  clearInterval(_tblPollInterval);
+}}
+
+// ── Table report results ──────────────────────────────────────────────────────
+function buildTblReportUI() {{
+  if (!_tbl.isHost) return;
+  const container = document.getElementById("tablePageContent");
+  const allPicked = _tbl.chosen.every(c => c !== null);
+  if (!allPicked) return;
+
+  // Add report button below table controls
+  const existing = document.getElementById("tblReportSection");
+  if (existing) existing.remove();
+
+  const section = document.createElement("div");
+  section.id = "tblReportSection";
+  section.style.cssText = "position:absolute;bottom:20px;right:20px;z-index:60;background:rgba(10,12,18,0.95);border:1px solid #1e2130;border-radius:12px;padding:16px;width:280px;backdrop-filter:blur(8px)";
+  section.innerHTML = `
+    <div style="font-size:9px;color:#475569;letter-spacing:2px;margin-bottom:12px">REPORT RESULTS</div>
+    <div id="tblFinishOrder" style="margin-bottom:10px">
+      ${{_tbl.players.map((p,i) => `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:10px;color:#475569;width:16px">#${{i+1}}</span>
+          <select id="tblFinish_${{i}}" style="flex:1;background:#080a0f;border:1px solid #1e2130;color:#e2e8f0;border-radius:6px;padding:4px 8px;font-family:inherit;font-size:10px">
+            ${{_tbl.players.map((pp,pi) => `<option value="${{pp.id}}" ${{pi===i?"selected":""}}>  ${{pp.name}}</option>`).join("")}}
+          </select>
+        </div>`).join("")}}
+    </div>
+    <select id="tblVictoryType" style="width:100%;background:#080a0f;border:1px solid #1e2130;color:#e2e8f0;border-radius:6px;padding:6px 8px;font-family:inherit;font-size:10px;margin-bottom:10px">
+      <option value="Domination">⚔️ Domination</option>
+      <option value="Science">🚀 Science</option>
+      <option value="Culture">🎭 Culture</option>
+      <option value="Diplomatic">🕊️ Diplomatic</option>
+    </select>
+    <button class="btn btn-orange" style="width:100%;font-size:11px" onclick="tblSubmitResults()">Submit Results</button>`;
+  container.appendChild(section);
+}}
+
+async function tblSubmitResults() {{
+  const n = _tbl.players.length;
+  const order = Array.from({{length:n}}, (_,i) => document.getElementById(`tblFinish_${{i}}`).value);
+  const victoryType = document.getElementById("tblVictoryType").value;
+  // Validate no duplicates
+  if (new Set(order).size !== n) {{ alert("Each player must appear exactly once"); return; }}
+  const res = await fetch("/api/game/report", {{
+    method:"POST", headers:{{"Content-Type":"application/json"}},
+    body: JSON.stringify({{guild, host_id: _tbl.lobbyId, order, victory_type: victoryType}})
+  }});
+  if (res.ok) {{
+    closeTableOverlay();
+    refreshPage();
+  }} else {{
+    alert("Could not report: " + await res.text());
+  }}
 }}
 
 // ── History filter ─────────────────────────────────────────────────────────
