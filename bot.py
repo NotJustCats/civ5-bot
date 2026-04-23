@@ -375,21 +375,24 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
         for pid, name in zip(group.get("players", []), group.get("player_names", [])):
             chosen = picks.get(pid)
             pool = draft.get(pid, []) if draft else []
-            ps.append({"name": name, "chosen": chosen, "pool": pool})
+            ps.append({"id": pid, "name": name, "chosen": chosen, "pool": pool})
         live_games.append({
             "host": host_name,
+            "host_id": game_id,
             "difficulty": group.get("difficulty", "Prince"),
             "map_type": group.get("map_type", "any"),
             "players": ps,
         })
     # Also include open lobbies
     for host_id, lobby in lobbies.items():
+        lobby_player_ids = lobby.get("players", [])
+        lobby_player_names = lobby.get("player_names", [])
         live_games.append({
             "host": lobby.get("host_name", "?"),
             "host_id": host_id,
             "difficulty": lobby.get("difficulty", "Prince"),
             "status": "lobby",
-            "players": [{"name": n, "chosen": None, "pool": []} for n in lobby.get("player_names", [])],
+            "players": [{"id": pid, "name": name, "chosen": None, "pool": []} for pid, name in zip(lobby_player_ids, lobby_player_names)],
         })
 
     import json as _json
@@ -1174,6 +1177,154 @@ async def handle_api_lobby_join(request):
     save_all_data(all_data)
     return web.Response(text="OK")
 
+async def handle_api_game_start(request):
+    session_token = request.cookies.get("session")
+    if not session_token: return web.Response(text="Not logged in", status=401)
+    user_id, _ = verify_session_token(session_token)
+    if not user_id: return web.Response(text="Invalid session", status=401)
+    body = await request.json()
+    guild_id = body.get("guild", "")
+    host_id = body.get("host_id", "")
+    map_type = body.get("map_type", "any")
+    if user_id != host_id: return web.Response(text="Only the host can start", status=403)
+    all_data = load_all_data()
+    data = get_server_data(all_data, guild_id)
+    if host_id not in data["lobbies"]: return web.Response(text="Lobby not found", status=404)
+    lobby = data["lobbies"][host_id]
+    if len(lobby["players"]) < 2: return web.Response(text="Need at least 2 players", status=400)
+    game_id = host_id
+    import random as _random
+    draft = build_draft(lobby["players"], map_type) if map_type != "skip" else None
+    for pid in lobby["players"]:
+        data["active_games"][pid] = {"civ": None, "game_id": game_id}
+    data["game_groups"][game_id] = {
+        "players": lobby["players"], "player_names": lobby["player_names"],
+        "player_civs": [None]*len(lobby["players"]),
+        "draft": draft, "picks": {},
+        "difficulty": lobby.get("difficulty","Prince"), "map_type": map_type,
+    }
+    del data["lobbies"][host_id]
+    save_all_data(all_data)
+    return web.Response(text="OK")
+
+async def handle_api_game_pick(request):
+    session_token = request.cookies.get("session")
+    if not session_token: return web.Response(text="Not logged in", status=401)
+    user_id, _ = verify_session_token(session_token)
+    if not user_id: return web.Response(text="Invalid session", status=401)
+    body = await request.json()
+    guild_id = body.get("guild", "")
+    host_id = body.get("host_id", "")
+    civ = body.get("civ", "")
+    matched = next((c for c in ALL_CIVS if c.lower() == civ.lower()), None)
+    if not matched: return web.Response(text="Unknown civ", status=400)
+    all_data = load_all_data()
+    data = get_server_data(all_data, guild_id)
+    group = data.get("game_groups", {}).get(host_id)
+    if not group: return web.Response(text="Game not found", status=404)
+    if user_id not in group["players"]: return web.Response(text="Not in this game", status=403)
+    picks = group.get("picks", {})
+    if user_id in picks: return web.Response(text="Already picked", status=400)
+    draft = group.get("draft", {})
+    if draft and matched not in draft.get(user_id, []):
+        return web.Response(text="Civ not in your draft", status=400)
+    if matched in picks.values(): return web.Response(text="Civ already picked", status=400)
+    picks[user_id] = matched
+    group["picks"] = picks
+    data["active_games"][user_id]["civ"] = matched
+    idx = group["players"].index(user_id)
+    group["player_civs"][idx] = matched
+    save_all_data(all_data)
+    return web.Response(text="OK")
+
+async def handle_api_game_cancel(request):
+    session_token = request.cookies.get("session")
+    if not session_token: return web.Response(text="Not logged in", status=401)
+    user_id, _ = verify_session_token(session_token)
+    if not user_id: return web.Response(text="Invalid session", status=401)
+    body = await request.json()
+    guild_id = body.get("guild", "")
+    host_id = body.get("host_id", "")
+    all_data = load_all_data()
+    data = get_server_data(all_data, guild_id)
+    # Cancel lobby
+    if host_id in data.get("lobbies", {}):
+        if user_id != host_id: return web.Response(text="Only host can cancel", status=403)
+        del data["lobbies"][host_id]
+        save_all_data(all_data)
+        return web.Response(text="OK")
+    # Cancel active game
+    group = data.get("game_groups", {}).get(host_id)
+    if group and user_id in group.get("players", []):
+        for pid in group["players"]:
+            data["active_games"].pop(pid, None)
+        del data["game_groups"][host_id]
+        save_all_data(all_data)
+        return web.Response(text="OK")
+    return web.Response(text="Not found", status=404)
+
+async def handle_api_game_report(request):
+    session_token = request.cookies.get("session")
+    if not session_token: return web.Response(text="Not logged in", status=401)
+    user_id, _ = verify_session_token(session_token)
+    if not user_id: return web.Response(text="Invalid session", status=401)
+    body = await request.json()
+    guild_id = body.get("guild", "")
+    host_id = body.get("host_id", "")
+    order = body.get("order", [])  # list of player ids in finishing order
+    victory_type = body.get("victory_type", None)
+    if user_id != host_id: return web.Response(text="Only host can report", status=403)
+    all_data = load_all_data()
+    data = get_server_data(all_data, guild_id)
+    group = data.get("game_groups", {}).get(host_id)
+    if not group: return web.Response(text="Game not found", status=404)
+    expected = set(group["players"])
+    # order may contain ids or names
+    resolved_order = []
+    for val in order:
+        if val in expected:
+            resolved_order.append(val)
+        else:
+            match = next((pid for pid in expected if data["players"].get(pid,{}).get("name","") == val), None)
+            if match: resolved_order.append(match)
+    if set(resolved_order) != expected or len(resolved_order) != len(expected):
+        return web.Response(text="Invalid finishing order", status=400)
+    player_info = []
+    for i, pid in enumerate(resolved_order):
+        p = get_player(data, pid)
+        entry = data["active_games"].get(pid, {})
+        civ = entry.get("civ") if isinstance(entry, dict) else None
+        player_info.append({"id": pid, "finish": i+1, "elo": p["elo"], "old_elo": p["elo"], "civ": civ})
+    new_elos = calc_multiplayer_elo(player_info)
+    difficulty = group.get("difficulty", "Prince")
+    draft_pools = group.get("draft", {}) or {}
+    for i, info in enumerate(player_info):
+        p = get_player(data, info["id"])
+        old_elo, new_elo = info["old_elo"], new_elos[i]
+        p["elo"] = new_elo
+        if i == 0: p["wins"] += 1
+        else: p["losses"] += 1
+        civ = info["civ"]
+        if civ:
+            p["civs"].setdefault(civ, {"wins":0,"losses":0})
+            if i == 0: p["civs"][civ]["wins"] += 1
+            else: p["civs"][civ]["losses"] += 1
+        data["active_games"].pop(info["id"], None)
+    data["game_groups"].pop(host_id, None)
+    data["matches"].append({
+        "type": f"{len(resolved_order)}-player",
+        "difficulty": difficulty,
+        "map_type": group.get("map_type","any"),
+        "victory_type": victory_type,
+        "draft_pools": draft_pools,
+        "players": [{"id": info["id"], "finish": info["finish"], "civ": info["civ"],
+                     "elo_before": info["old_elo"], "elo_after": new_elos[i]}
+                    for i, info in enumerate(player_info)],
+        "played_at": datetime.utcnow().isoformat()
+    })
+    save_all_data(all_data)
+    return web.Response(text="OK")
+
 async def handle_api_lobby_leave(request):
     """Leave a lobby from the website."""
     session_token = request.cookies.get("session")
@@ -1212,6 +1363,10 @@ async def start_web_server():
     app.router.add_post("/api/lobby/create", handle_api_lobby_create)
     app.router.add_post("/api/lobby/join", handle_api_lobby_join)
     app.router.add_post("/api/lobby/leave", handle_api_lobby_leave)
+    app.router.add_post("/api/game/start", handle_api_game_start)
+    app.router.add_post("/api/game/pick", handle_api_game_pick)
+    app.router.add_post("/api/game/cancel", handle_api_game_cancel)
+    app.router.add_post("/api/game/report", handle_api_game_report)
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(os.getenv("PORT", 8080))
