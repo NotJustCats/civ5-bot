@@ -545,6 +545,15 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
   .civ-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin-top: 8px; }}
   .civ-option {{ padding: 8px 12px; border-radius: 8px; border: 1px solid #1e2130; background: #080a0f; color: #94a3b8; font-family: IBM Plex Mono, monospace; font-size: 11px; cursor: pointer; text-align: center; transition: all 0.15s; }}
   .civ-option:hover {{ border-color: #f97316; color: #f97316; }}
+  /* Draft civ tooltip */
+  .civ-tooltip {{ position: fixed; z-index: 9999; background: #0d1017; border: 1px solid #2a3040; border-radius: 10px; padding: 12px 14px; width: 240px; pointer-events: none; opacity: 0; transition: opacity 0.15s; box-shadow: 0 8px 32px rgba(0,0,0,0.6); }}
+  .civ-tooltip.visible {{ opacity: 1; }}
+  .civ-tooltip-name {{ font-family: 'Cinzel', serif; font-size: 13px; font-weight: 700; color: #e2e8f0; margin-bottom: 2px; }}
+  .civ-tooltip-leader {{ font-size: 9px; color: #475569; margin-bottom: 8px; letter-spacing: 1px; }}
+  .civ-tooltip-row {{ margin-bottom: 7px; }}
+  .civ-tooltip-type {{ font-size: 8px; letter-spacing: 2px; margin-bottom: 2px; }}
+  .civ-tooltip-title {{ font-size: 11px; font-weight: 700; color: #e2e8f0; margin-bottom: 2px; }}
+  .civ-tooltip-desc {{ font-size: 9px; color: #64748b; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }}
   .civ-option.picked {{ border-color: #22c55e; color: #22c55e; background: #0c2010; }}
   .finish-row {{ display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }}
   .finish-medal {{ font-size: 18px; width: 28px; text-align: center; flex-shrink: 0; }}
@@ -670,6 +679,7 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
 <div class="page" id="page-host">
   <div class="scroll-page" id="hostContent"></div>
 </div>
+<div id="civTooltip" class="civ-tooltip"></div>
 <div id="modalContainer"></div>
 
 <script>
@@ -1121,11 +1131,11 @@ function buildLive() {{
         if (isMe && !iHavePicked && !isLobby) {{
           poolHtml = `<div class="pool-label" style="color:#f97316;margin-top:8px">YOUR DRAFT — click to pick</div>
             <div class="pool-civs" style="margin-top:4px">
-              ${{p.pool.map(c => `<button onclick="pickCiv('${{g.host_id}}','${{c}}')" style="padding:4px 10px;border-radius:6px;border:1px solid #1e2130;background:#080a0f;color:#94a3b8;font-family:inherit;font-size:10px;cursor:pointer;transition:all 0.15s" onmouseover="this.style.borderColor='#f97316';this.style.color='#f97316'" onmouseout="this.style.borderColor='#1e2130';this.style.color='#94a3b8'">${{c}}</button>`).join("")}}
+              ${{p.pool.map(c => `<button onclick="pickCiv('${{g.host_id}}','${{c}}')" style="padding:4px 10px;border-radius:6px;border:1px solid #1e2130;background:#080a0f;color:#94a3b8;font-family:inherit;font-size:10px;cursor:pointer;transition:all 0.15s" onmouseover="showCivTooltip('${{c}}',this);this.style.borderColor='#f97316';this.style.color='#f97316'" onmouseout="hideCivTooltip();this.style.borderColor='#1e2130';this.style.color='#94a3b8'">${{c}}</button>`).join("")}}
             </div>`;
         }} else {{
           poolHtml = `<div class="pool-label">DRAFT POOL</div>
-            <div class="pool-civs">${{p.pool.map(c => `<span class="pool-civ ${{c===p.chosen?"chosen":""}}">${{c}}</span>`).join("")}}</div>`;
+            <div class="pool-civs">${{p.pool.map(c => `<span class="pool-civ ${{c===p.chosen?"chosen":""}}" onmouseenter="showCivTooltip('${{c}}',this)" onmouseleave="hideCivTooltip()">${{c}}</span>`).join("")}}</div>`;
         }}
       }}
 
@@ -1495,6 +1505,8 @@ function buildHostPage() {{
           const btn = document.createElement("button");
           btn.className = "civ-option" + (c === p.chosen ? " picked" : "");
           btn.textContent = c;
+          btn.addEventListener("mouseenter", () => showCivTooltip(c, btn));
+          btn.addEventListener("mouseleave", hideCivTooltip);
           if (isMe && !iHavePicked) {{
             btn.onclick = () => pickCiv(myGame.host_id, c);
           }} else {{
@@ -1596,6 +1608,58 @@ function refreshPage() {{
     setTimeout(() => switchTab(urlTab), 50);
   }}
 }})();
+
+// ── Civ Hover Tooltip ─────────────────────────────────────────────────────────
+const _tooltip = document.getElementById("civTooltip");
+let _tooltipTimeout = null;
+
+function showCivTooltip(civName, anchorEl) {{
+  const civ = CIVPEDIA[civName];
+  if (!civ) return;
+  clearTimeout(_tooltipTimeout);
+
+  const ability = civ.entries.find(e => e.type === "Ability");
+  const units = civ.entries.filter(e => e.type === "Unit" || e.type === "Great Person");
+  const buildings = civ.entries.filter(e => e.type === "Building");
+  const improvements = civ.entries.filter(e => e.type === "Improvement");
+  const isCoastal = COASTAL_CIVS.has(civName);
+
+  const rows = [
+    ...(ability ? [{{type:"ABILITY", color:"#f97316", icon:"⚡", name: ability.name, desc: ability.desc}}] : []),
+    ...units.map(u => ({{type:"UNIT", color:"#ef4444", icon:"⚔️", name: u.name, desc: u.desc}})),
+    ...buildings.map(b => ({{type:"BUILDING", color:"#3b82f6", icon:"🏛️", name: b.name, desc: b.desc}})),
+    ...improvements.map(i => ({{type:"IMPROVEMENT", color:"#22c55e", icon:"🔧", name: i.name, desc: i.desc}})),
+  ];
+
+  _tooltip.innerHTML = `
+    <div class="civ-tooltip-name">${{isCoastal?"⛵ ":"🏕️ "}}{{}}{{}}</div>
+    <div class="civ-tooltip-leader">${{civ.leader}}</div>
+    ${{rows.map(r => `
+      <div class="civ-tooltip-row" style="border-left:2px solid ${{r.color}};padding-left:8px">
+        <div class="civ-tooltip-type" style="color:${{r.color}}">${{r.icon}} ${{r.type}}</div>
+        <div class="civ-tooltip-title">${{r.name}}</div>
+        ${{r.desc ? `<div class="civ-tooltip-desc">${{r.desc}}</div>` : ""}}
+      </div>`).join("")}}`;
+
+  // Hacky but needed — inject name after to avoid f-string conflict
+  _tooltip.querySelector(".civ-tooltip-name").textContent = (isCoastal?"⛵ ":"🏕️ ") + civName;
+
+  // Position tooltip near the element
+  const rect = anchorEl.getBoundingClientRect();
+  const tipW = 240, tipH = _tooltip.offsetHeight || 200;
+  let left = rect.right + 10;
+  let top = rect.top;
+  if (left + tipW > window.innerWidth - 10) left = rect.left - tipW - 10;
+  if (top + tipH > window.innerHeight - 10) top = window.innerHeight - tipH - 10;
+  if (top < 10) top = 10;
+  _tooltip.style.left = left + "px";
+  _tooltip.style.top = top + "px";
+  _tooltip.classList.add("visible");
+}}
+
+function hideCivTooltip() {{
+  _tooltipTimeout = setTimeout(() => _tooltip.classList.remove("visible"), 100);
+}}
 
 async function pickCiv(hostId, civ) {{
   const res = await fetch("/api/game/pick", {{
