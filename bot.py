@@ -292,7 +292,7 @@ def build_graph_html(guild_id: str) -> str:
         for m in sorted_matches:
             if m.get("type") in ("reset", None): continue
             gps = m.get("players", [])
-            if len(gps) >= 5:
+            if len(gps) >= 4:
                 for mp in gps:
                     if mp["id"] == pid:
                         bg_total += 1
@@ -643,6 +643,12 @@ function showProfile(p, idx) {{
   }}).join(""):`<div style="color:#334155;font-size:11px;padding:8px 0">No civ data yet</div>`;
   const achRows=ACHIEVEMENTS.map(a=>{{const ok=a.check(d);return`<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #1a1f2e;opacity:${{ok?1:0.3}}"><span style="font-size:16px;width:22px;text-align:center">${{a.icon}}</span><div style="flex:1"><div style="font-size:11px;font-weight:600;color:${{ok?"#e2e8f0":"#475569"}}">${{a.name}}</div><div style="font-size:9px;color:#475569;margin-top:1px">${{a.desc}}</div></div><span style="font-size:12px;color:${{ok?"#f97316":"#1e2130"}}">${{ok?"✓":"○"}}</span></div>`;
   }}).join("");
+  const spider = d.spider || {{}};
+  const avgEloRaw = spider.elo_growth ? Math.round((spider.elo_growth - 50) / 4) : 0;
+  const avgEloSign = avgEloRaw >= 0 ? "+" : "";
+  const avgEloDisplay = avgEloRaw;
+  const avgEloColor = avgEloRaw >= 0 ? "#22c55e" : "#ef4444";
+
   profileContent.innerHTML=`
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px">
       <div><div style="font-weight:700;font-size:16px;color:${{color}}">${{p.name}}</div><div style="font-size:11px;color:#94a3b8;margin-top:2px">${{rankLabel(p.finalElo)}} · ${{p.finalElo}} Elo</div></div>
@@ -652,6 +658,16 @@ function showProfile(p, idx) {{
       <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center"><div style="font-size:18px;font-weight:700;color:#e2e8f0">${{wins}}</div><div style="font-size:9px;color:#475569;margin-top:2px">WINS</div></div>
       <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center"><div style="font-size:18px;font-weight:700;color:#e2e8f0">${{losses}}</div><div style="font-size:9px;color:#475569;margin-top:2px">LOSSES</div></div>
       <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center"><div style="font-size:18px;font-weight:700;color:${{color}}">${{wr}}%</div><div style="font-size:9px;color:#475569;margin-top:2px">WIN RATE</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:14px">
+      <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
+        <div style="font-size:14px;font-weight:700;color:${{avgEloColor}}">${{avgEloSign}}${{avgEloDisplay}}</div>
+        <div style="font-size:9px;color:#475569;margin-top:2px">AVG ELO/GAME</div>
+      </div>
+      <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
+        <div style="font-size:14px;font-weight:700;color:#e2e8f0">${{total}}</div>
+        <div style="font-size:9px;color:#475569;margin-top:2px">GAMES PLAYED</div>
+      </div>
     </div>
     <div style="font-size:10px;color:#64748b;letter-spacing:1px;margin-bottom:6px">MAP PREFERENCE</div>
     <div style="display:flex;gap:6px;margin-bottom:14px">
@@ -666,7 +682,6 @@ function showProfile(p, idx) {{
   pieCard.style.display="none"; lbCard.style.display="none"; profileCard.style.display="flex";
 
   // Render spider chart
-  const spider = d.spider || {{}};
   const spiderCanvas = document.getElementById("spiderChart");
   if (spiderCanvas) {{
     if (window._spiderChart) {{ window._spiderChart.destroy(); window._spiderChart = null; }}
