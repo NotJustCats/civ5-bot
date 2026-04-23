@@ -491,6 +491,16 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
   .hist-filter {{ display: flex; gap: 6px; flex-shrink: 0; margin-bottom: 8px; }}
   .filter-btn {{ padding: 5px 12px; border-radius: 6px; border: 1px solid #1e2130; background: transparent; color: #475569; font-family: 'IBM Plex Mono', monospace; font-size: 10px; cursor: pointer; }}
   .filter-btn.active {{ border-color: #f97316; color: #f97316; }}
+  .host-section {{ background: #0d1017; border: 1px solid #1e2130; border-radius: 12px; padding: 20px; margin-bottom: 14px; }}
+  .host-section-title {{ font-size: 11px; color: #64748b; letter-spacing: 2px; margin-bottom: 14px; }}
+  .player-card {{ display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: #080a0f; border: 1px solid #1e2130; border-radius: 8px; margin-bottom: 8px; }}
+  .player-card-name {{ font-weight: 600; font-size: 13px; flex: 1; }}
+  .civ-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; margin-top: 8px; }}
+  .civ-option {{ padding: 8px 12px; border-radius: 8px; border: 1px solid #1e2130; background: #080a0f; color: #94a3b8; font-family: IBM Plex Mono, monospace; font-size: 11px; cursor: pointer; text-align: center; transition: all 0.15s; }}
+  .civ-option:hover {{ border-color: #f97316; color: #f97316; }}
+  .civ-option.picked {{ border-color: #22c55e; color: #22c55e; background: #0c2010; }}
+  .finish-row {{ display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }}
+  .finish-medal {{ font-size: 18px; width: 28px; text-align: center; flex-shrink: 0; }}
 </style>
 </head>
 <body>
@@ -503,6 +513,7 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
   <div class="tab active" onclick="switchTab('stats')">STATS</div>
   <div class="tab" onclick="switchTab('live')">LIVE GAMES</div>
   <div class="tab" onclick="switchTab('history')">HISTORY</div>
+  <div class="tab" id="hostTab" onclick="switchTab('host')" style="display:none">HOST GAME</div>
 </div>
 
 <!-- STATS PAGE -->
@@ -542,6 +553,10 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
     <button class="filter-btn" onclick="filterHistory('mine')">MY GAMES</button>
   </div>
   <div class="scroll-page" id="historyContent"></div>
+</div>
+<!-- HOST GAME PAGE -->
+<div class="page" id="page-host">
+  <div class="scroll-page" id="hostContent"></div>
 </div>
 <div id="modalContainer"></div>
 
@@ -610,13 +625,14 @@ function victoryBadge(vt) {{
 // ── Tab switching ─────────────────────────────────────────────────────────────
 function switchTab(name) {{
   document.querySelectorAll(".tab").forEach((t,i) => {{
-    const names = ["stats","live","history"];
+    const names = ["stats","live","history","host"];
     t.classList.toggle("active", names[i] === name);
   }});
   document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
   document.getElementById("page-"+name).classList.add("active");
   if (name === "live") buildLive();
   if (name === "history") buildHistory();
+  if (name === "host") buildHostPage();
 }}
 
 // ── Elo chart ─────────────────────────────────────────────────────────────────
@@ -889,6 +905,226 @@ function toggleGame(id) {{
   chev.classList.toggle("open");
 }}
 
+// ── Host Game Page ────────────────────────────────────────────────────────────
+function buildHostPage() {{
+  const el = document.getElementById("hostContent");
+  if (!LOGGED_IN_ID) {{
+    el.innerHTML = '<p class="no-games">LOG IN TO ACCESS GAME CONTROLS</p>';
+    return;
+  }}
+  const myName = DISPLAY_NAME || LOGGED_IN_NAME;
+  const myGame = LIVE_GAMES.find(g => g.players.some(p => p.id === LOGGED_IN_ID));
+  const amHost = myGame && myGame.host_id === LOGGED_IN_ID;
+  const isLobby = myGame && myGame.status === "lobby";
+  const inDraft = myGame && !isLobby && myGame.players.some(p => p.id === LOGGED_IN_ID && !p.chosen);
+  const allPicked = myGame && !isLobby && myGame.players.every(p => p.chosen);
+  const myPlayerData = myGame && myGame.players.find(p => p.id === LOGGED_IN_ID);
+  const iHavePicked = myPlayerData && myPlayerData.chosen;
+
+  el.innerHTML = "";
+
+  // ── No game yet ────────────────────────────────────────────────────────────
+  if (!myGame) {{
+    const sec = document.createElement("div"); sec.className = "host-section";
+    sec.innerHTML = `
+      <div class="host-section-title">CREATE A LOBBY</div>
+      <label class="form-label">DIFFICULTY</label>
+      <select class="form-select" id="hDiff" style="max-width:220px">
+        <option value="Prince">Prince</option>
+        <option value="King">King</option>
+      </select>
+      <div style="margin-top:4px">
+        <button class="btn btn-primary" onclick="hostCreateLobby()">🏛️ Open Lobby</button>
+      </div>`;
+    el.appendChild(sec);
+
+    // Show open lobbies to join
+    const openLobbies = LIVE_GAMES.filter(g => g.status === "lobby");
+    if (openLobbies.length) {{
+      const sec2 = document.createElement("div"); sec2.className = "host-section";
+      sec2.innerHTML = `<div class="host-section-title">OPEN LOBBIES</div>` +
+        openLobbies.map(g => `
+          <div class="player-card">
+            <div class="player-card-name">🏛️ ${{g.host}}'s lobby</div>
+            <span style="font-size:10px;color:#475569">${{g.players.length}} players · ${{g.difficulty}}</span>
+            <button class="btn btn-primary" style="padding:5px 12px;font-size:10px" onclick="joinLobby('${{g.host_id}}')">Join</button>
+          </div>`).join("");
+      el.appendChild(sec2);
+    }}
+    return;
+  }}
+
+  // ── In a lobby ─────────────────────────────────────────────────────────────
+  if (isLobby) {{
+    const sec = document.createElement("div"); sec.className = "host-section";
+    const playerList = myGame.players.map((p,i) => `
+      <div class="player-card">
+        <div class="player-card-name">${{p.name}}${{p.id===LOGGED_IN_ID?" (you)":""}}</div>
+        ${{i===0?'<span style="font-size:10px;color:#f97316">HOST</span>':''}}
+      </div>`).join("");
+    sec.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div class="host-section-title" style="margin:0">LOBBY · ${{myGame.difficulty}}</div>
+        <span style="font-size:10px;color:#475569">${{myGame.players.length}} players</span>
+      </div>
+      ${{playerList}}
+      <div style="margin-top:16px;padding-top:14px;border-top:1px solid #1e2130;display:flex;gap:10px;flex-wrap:wrap">
+        ${{amHost ? `
+          <div style="flex:1;min-width:200px">
+            <label class="form-label">MAP TYPE</label>
+            <select class="form-select" id="hMapType">
+              <option value="any">🌐 Any</option>
+              <option value="land">🏕️ Land</option>
+              <option value="coastal">⛵ Coastal</option>
+              <option value="skip">Skip draft</option>
+            </select>
+            <button class="btn btn-primary" onclick="hostStartGame('${{myGame.host_id}}')">▶ Start Game</button>
+            <button class="btn btn-ghost" style="margin-left:8px" onclick="cancelGame('${{myGame.host_id}}','lobby')">✕ Cancel</button>
+          </div>` : `<button class="btn btn-ghost" onclick="leaveLobby('${{myGame.host_id}}')">Leave Lobby</button>`}}
+      </div>`;
+    el.appendChild(sec);
+    return;
+  }}
+
+  // ── In draft phase ─────────────────────────────────────────────────────────
+  if (!allPicked) {{
+    const sec = document.createElement("div"); sec.className = "host-section";
+    const mapLabel = {{"land":"🏕️ Land","coastal":"⛵ Coastal","any":"🌐 Any","skip":"No draft"}}[myGame.map_type]||"";
+    sec.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div class="host-section-title" style="margin:0">DRAFT PHASE · ${{mapLabel}}</div>
+      <span style="font-size:10px;color:#475569">${{myGame.players.filter(p=>p.chosen).length}}/${{myGame.players.length}} picked</span>
+    </div>`;
+
+    myGame.players.forEach(p => {{
+      const isMe = p.id === LOGGED_IN_ID;
+      const card = document.createElement("div");
+      card.style.marginBottom = "14px";
+      card.innerHTML = `<div class="player-card" style="margin-bottom:8px">
+        <div class="player-card-name">${{p.name}}${{isMe?" (you)":""}}</div>
+        ${{p.chosen ? `<span class="badge" style="color:#22c55e;background:#0c2010;border:1px solid #22c55e44">${{p.chosen}}</span>` : '<span class="badge">picking...</span>'}}
+      </div>`;
+      if (p.pool && p.pool.length) {{
+        const grid = document.createElement("div"); grid.className = "civ-grid";
+        p.pool.forEach(c => {{
+          const btn = document.createElement("button");
+          btn.className = "civ-option" + (c === p.chosen ? " picked" : "");
+          btn.textContent = c;
+          if (isMe && !iHavePicked) {{
+            btn.onclick = () => pickCiv(myGame.host_id, c);
+          }} else {{
+            btn.disabled = true; btn.style.opacity = "0.5"; btn.style.cursor = "default";
+          }}
+          grid.appendChild(btn);
+        }});
+        card.appendChild(grid);
+      }}
+      sec.appendChild(card);
+    }});
+
+    const actions = document.createElement("div");
+    actions.style.cssText = "margin-top:14px;padding-top:12px;border-top:1px solid #1e2130";
+    actions.innerHTML = `<button class="btn btn-ghost" onclick="cancelGame('${{myGame.host_id}}','game')">✕ Cancel Game</button>`;
+    sec.appendChild(actions);
+    el.appendChild(sec);
+    return;
+  }}
+
+  // ── All picked — game in progress ──────────────────────────────────────────
+  const sec = document.createElement("div"); sec.className = "host-section";
+  const playerList2 = myGame.players.map(p => `
+    <div class="player-card">
+      <div class="player-card-name">${{p.name}}${{p.id===LOGGED_IN_ID?" (you)":""}}</div>
+      <span class="badge" style="color:#22c55e;background:#0c2010;border:1px solid #22c55e44">${{p.chosen}}</span>
+    </div>`).join("");
+
+  let reportHtml = "";
+  if (amHost) {{
+    const medals = ["🥇","🥈","🥉","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣"];
+    const opts = myGame.players.map(p => `<option value="${{p.id}}">${{p.name}}</option>`).join("");
+    const rows = myGame.players.map((_,i) => `
+      <div class="finish-row">
+        <span class="finish-medal">${{medals[i]}}</span>
+        <select class="form-select" id="hFinish-${{i}}" style="margin-bottom:0">${{opts}}</select>
+      </div>`).join("");
+    // Set default order
+    reportHtml = `
+      <div style="margin-top:16px;padding-top:14px;border-top:1px solid #1e2130">
+        <div class="host-section-title">REPORT RESULTS</div>
+        ${{rows}}
+        <label class="form-label" style="margin-top:8px">VICTORY TYPE</label>
+        <select class="form-select" id="hVictory" style="max-width:220px">
+          <option value="">— None —</option>
+          <option value="Domination">⚔️ Domination</option>
+          <option value="Science">🚀 Science</option>
+          <option value="Culture">🎭 Culture</option>
+          <option value="Diplomatic">🕊️ Diplomatic</option>
+        </select>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn btn-primary" onclick="hostSubmitResults('${{myGame.host_id}}',${{myGame.players.length}})">✅ Submit Results</button>
+          <button class="btn btn-ghost" onclick="cancelGame('${{myGame.host_id}}','game')">✕ Cancel Game</button>
+        </div>
+      </div>`;
+  }} else {{
+    reportHtml = `<div style="margin-top:14px;padding-top:12px;border-top:1px solid #1e2130">
+      <p style="font-size:11px;color:#475569;margin-bottom:10px">Waiting for host to report results...</p>
+      <button class="btn btn-ghost" onclick="cancelGame('${{myGame.host_id}}','game')">✕ Cancel Game</button>
+    </div>`;
+  }}
+
+  sec.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div class="host-section-title" style="margin:0">GAME IN PROGRESS</div>
+      <span style="font-size:10px;color:#475569">${{myGame.difficulty}}</span>
+    </div>
+    ${{playerList2}}
+    ${{reportHtml}}`;
+  el.appendChild(sec);
+
+  // Set default finishing order
+  if (amHost) {{
+    myGame.players.forEach((p, i) => {{
+      const sel = document.getElementById("hFinish-"+i);
+      if (sel) sel.value = p.id;
+    }});
+  }}
+}}
+
+async function hostCreateLobby() {{
+  const difficulty = document.getElementById("hDiff").value;
+  const res = await fetch("/api/lobby/create", {{
+    method: "POST", headers: {{"Content-Type": "application/json"}},
+    body: JSON.stringify({{guild: guild, difficulty}})
+  }});
+  if (res.ok) {{ location.reload(); }}
+  else {{ const t = await res.text(); alert("Could not create lobby: " + t); }}
+}}
+
+async function hostStartGame(hostId) {{
+  const mapType = document.getElementById("hMapType").value;
+  const res = await fetch("/api/game/start", {{
+    method: "POST", headers: {{"Content-Type": "application/json"}},
+    body: JSON.stringify({{guild: guild, host_id: hostId, map_type: mapType}})
+  }});
+  if (res.ok) {{ location.reload(); }}
+  else {{ const t = await res.text(); alert("Could not start: " + t); }}
+}}
+
+async function hostSubmitResults(hostId, count) {{
+  const order = [];
+  for (let i = 0; i < count; i++) {{
+    const val = document.getElementById("hFinish-"+i)?.value;
+    if (!val || order.includes(val)) {{ alert("Check finishing order — no duplicates allowed."); return; }}
+    order.push(val);
+  }}
+  const victoryType = document.getElementById("hVictory").value || null;
+  const res = await fetch("/api/game/report", {{
+    method: "POST", headers: {{"Content-Type": "application/json"}},
+    body: JSON.stringify({{guild: guild, host_id: hostId, order, victory_type: victoryType}})
+  }});
+  if (res.ok) {{ location.reload(); }}
+  else {{ const t = await res.text(); alert("Could not submit: " + t); }}
+}}
+
 // ── Auth ─────────────────────────────────────────────────────────────────────
 const authArea = document.getElementById("authArea");
 const guild = new URLSearchParams(window.location.search).get("guild") || GUILD_ID || "";
@@ -905,6 +1141,9 @@ if (LOGGED_IN_ID && LOGGED_IN_NAME) {{
   // Show history filter
   const hf = document.getElementById("histFilter");
   if (hf) hf.style.display = "flex";
+  // Show host tab
+  const ht = document.getElementById("hostTab");
+  if (ht) ht.style.display = "block";
 
   // Auto-open this player's profile
   const myIdx = PLAYERS.findIndex(p => p.id === LOGGED_IN_ID);
