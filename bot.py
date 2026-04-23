@@ -412,6 +412,8 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
     display_name_json = _json.dumps(prefs.get("display_name", logged_in_name or ""))
     fav_civ_json = _json.dumps(prefs.get("fav_civ", ""))
     guild_id_json = _json.dumps(guild_id)
+    # Build per-player prefs for display
+    player_prefs_json = _json.dumps({pid: p.get("prefs", {}) for pid, p in players.items()})
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -575,7 +577,48 @@ const ALL_CIVS = {all_civs_json};
 const DISPLAY_NAME = {display_name_json};
 const FAV_CIV = {fav_civ_json};
 const GUILD_ID = {guild_id_json};
+const PLAYER_PREFS = {player_prefs_json};
 const PALETTE = ["#f97316","#3b82f6","#a855f7","#22c55e","#ef4444","#eab308","#06b6d4","#ec4899","#f43f5e","#10b981","#8b5cf6","#0ea5e9"];
+
+const TITLES = [
+  {{id:"settler",   label:"🪨 Settler",          req: null}},
+  {{id:"chieftain", label:"🌿 Chieftain",         req: d => (d.wins||0)+(d.losses||0) >= 1}},
+  {{id:"sea_dog",   label:"⛵ Sea Dog",            req: d => (d.coastal_games||0) >= 1}},
+  {{id:"landlubber",label:"🏕️ Landlubber",         req: d => (d.land_games||0) >= 1}},
+  {{id:"explorer",  label:"🗺️ Explorer",           req: d => (d.unique_civs||0) >= 10}},
+  {{id:"tactician", label:"⚔️ Tactician",          req: d => (d.win_civs||0) >= 5}},
+  {{id:"polymath",  label:"🏛️ Polymath",           req: d => (d.win_civs||0) >= 10}},
+  {{id:"dom_i",     label:"⚔️ Conqueror",          req: d => (d.victory_counts?.Domination||0) >= 1}},
+  {{id:"sci_i",     label:"🚀 Space Pioneer",      req: d => (d.victory_counts?.Science||0) >= 1}},
+  {{id:"cul_i",     label:"🎭 Patron of the Arts", req: d => (d.victory_counts?.Culture||0) >= 1}},
+  {{id:"dip_i",     label:"🕊️ Diplomat",           req: d => (d.victory_counts?.Diplomatic||0) >= 1}},
+  {{id:"prince",    label:"⚙️ Prince",             req: d => (d.peak_elo||0) >= 1100}},
+  {{id:"king",      label:"🛡️ King",               req: d => (d.peak_elo||0) >= 1250}},
+  {{id:"emperor",   label:"⚔️ Emperor",            req: d => (d.peak_elo||0) >= 1400}},
+  {{id:"deity",     label:"🏆 Deity",              req: d => (d.peak_elo||0) >= 1600}},
+  {{id:"grand_vic", label:"👥 Grand Victor",        req: d => d.big_game_win}},
+  {{id:"full_house",label:"🎖️ Full House",          req: d => d.played_8}},
+  {{id:"d_prince",  label:"👑 Prince",             req: d => (d.difficulty_wins?.Prince||0) >= 1}},
+  {{id:"d_king",    label:"🏰 King Slayer",        req: d => (d.difficulty_wins?.King||0) >= 1}},
+  {{id:"trav",      label:"🌍 World Traveller",    req: d => (d.unique_civs||0) >= 20}},
+];
+
+function getPlayerColour(pid, fallbackIdx) {{
+  const prefs = PLAYER_PREFS[pid] || {{}};
+  return prefs.colour || PALETTE[fallbackIdx % PALETTE.length];
+}}
+
+function getPlayerTitle(pid) {{
+  const prefs = PLAYER_PREFS[pid] || {{}};
+  const chosen = prefs.title;
+  if (!chosen) return "";
+  const t = TITLES.find(t => t.id === chosen);
+  return t ? t.label : "";
+}}
+
+function getPlayerFavCiv(pid) {{
+  return (PLAYER_PREFS[pid] || {{}}).fav_civ || "";
+}}
 
 const ACHIEVEMENTS = [
   {{id:"civ10",    icon:"🗺️", name:"Explorer",          desc:"Play 10 different civs",          check: d => d.unique_civs >= 10}},
@@ -728,8 +771,9 @@ PLAYERS.forEach((p,i) => {{
   const color = PALETTE[i%PALETTE.length];
   const medals = ["🥇","🥈","🥉"];
   const btn = document.createElement("button");
+  const pCol = getPlayerColour(p.id, i);
   btn.className = "player-btn";
-  btn.style.borderColor = color; btn.style.color = color;
+  btn.style.borderColor = pCol; btn.style.color = pCol;
   btn.innerHTML = `<div class="player-name">${{medals[i]||"#"+(i+1)}} ${{p.name}}</div><div class="player-elo">${{p.finalElo}} · ${{rankLabel(p.finalElo)}}</div>`;
   btn.onclick = () => {{
     if (activeProfile === p.id) {{ activeProfile=null; btn.classList.remove("profile-active"); hideProfile(); }}
@@ -742,7 +786,9 @@ PLAYERS.forEach((p,i) => {{
 function hideProfile() {{ profileCard.style.display="none"; pieCard.style.display="flex"; lbCard.style.display="flex"; }}
 
 function showProfile(p, idx) {{
-  const color = PALETTE[idx%PALETTE.length];
+  const color = getPlayerColour(p.id, idx);
+  const pTitle = getPlayerTitle(p.id);
+  const pFav = getPlayerFavCiv(p.id);
   const d = LB_DATA[p.id]||{{}};
   const wins=d.wins||0, losses=d.losses||0, total=wins+losses;
   const wr=total>0?Math.round(wins/total*100):0;
@@ -762,7 +808,10 @@ function showProfile(p, idx) {{
 
   profileContent.innerHTML=`
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px">
-      <div><div style="font-weight:700;font-size:16px;color:${{color}}">${{p.name}}</div><div style="font-size:11px;color:#94a3b8;margin-top:2px">${{rankLabel(p.finalElo)}} · ${{p.finalElo}} Elo</div></div>
+      <div>
+        <div style="font-weight:700;font-size:16px;color:${{color}}">${{p.name}}${{pTitle?` <span style="font-size:11px;color:#64748b;font-weight:400">${{pTitle}}</span>`:""}}</div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:2px">${{rankLabel(p.finalElo)}} · ${{p.finalElo}} Elo${{pFav?` · ⭐ ${{pFav}}`:""}}</div>
+      </div>
       <span style="font-size:10px;color:#475569;cursor:pointer;padding:4px 8px;border:1px solid #1e2130;border-radius:6px;flex-shrink:0" onclick="closeProfile()">✕ close</span>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:14px">
@@ -825,7 +874,10 @@ function buildLeaderboard() {{
     const color=PALETTE[i%PALETTE.length],wins=LB_DATA[p.id]?.wins||0,losses=LB_DATA[p.id]?.losses||0;
     const wr=(wins+losses)>0?Math.round(wins/(wins+losses)*100):0;
     const row=document.createElement("div"); row.className="lb-row";
-    row.innerHTML=`<span style="font-size:18px;width:28px;text-align:center">${{lbMedals[i]||"#"+(i+1)}}</span><div style="flex:1"><div style="font-weight:600;font-size:13px;color:${{color}}">${{p.name}}</div><div style="font-size:10px;color:#475569;margin-top:3px">${{wins}}W/${{losses}}L·${{wr}}%WR</div></div><div style="text-align:right"><div style="font-weight:700;font-size:14px;color:#e2e8f0">${{p.finalElo}}</div><div style="font-size:10px;color:#475569;margin-top:2px">${{rankLabel(p.finalElo)}}</div></div>`;
+    const pColour = getPlayerColour(p.id, i);
+    const pTitle = getPlayerTitle(p.id);
+    const pFav = getPlayerFavCiv(p.id);
+    row.innerHTML=`<span style="font-size:18px;width:28px;text-align:center">${{lbMedals[i]||"#"+(i+1)}}</span><div style="flex:1"><div style="font-weight:600;font-size:13px;color:${{pColour}}">${{p.name}}${{pTitle?` <span style="font-size:9px;color:#64748b">${{pTitle}}</span>`:""}}</div><div style="font-size:10px;color:#475569;margin-top:3px">${{wins}}W/${{losses}}L·${{wr}}%WR${{pFav?` · ${{pFav}}`:""}}</div></div><div style="text-align:right"><div style="font-weight:700;font-size:14px;color:#e2e8f0">${{p.finalElo}}</div><div style="font-size:10px;color:#475569;margin-top:2px">${{rankLabel(p.finalElo)}}</div></div>`;
     row.onclick=()=>{{if(activeProfile===p.id){{activeProfile=null;hideProfile();}}else{{activeProfile=p.id;document.querySelectorAll(".player-btn").forEach(b=>b.classList.remove("profile-active"));const btns=document.querySelectorAll(".player-btn");if(btns[i])btns[i].classList.add("profile-active");showProfile(p,i);}}}};
     lbList.appendChild(row);
   }});
@@ -956,11 +1008,11 @@ function buildHostPage() {{
 
   el.innerHTML = "";
 
-  // ── No game yet ────────────────────────────────────────────────────────────
+  // ── No game yet — only show create lobby (join is in Live Games tab) ─────────
   if (!myGame) {{
     const sec = document.createElement("div"); sec.className = "host-section";
     sec.innerHTML = `
-      <div class="host-section-title">CREATE A LOBBY</div>
+      <div class="host-section-title">HOST A GAME</div>
       <label class="form-label">DIFFICULTY</label>
       <select class="form-select" id="hDiff" style="max-width:220px">
         <option value="Prince">Prince</option>
@@ -968,22 +1020,9 @@ function buildHostPage() {{
       </select>
       <div style="margin-top:4px">
         <button class="btn btn-primary" onclick="hostCreateLobby()">🏛️ Open Lobby</button>
-      </div>`;
+      </div>
+      <p style="font-size:10px;color:#475569;margin-top:12px">To join someone else's lobby, go to the <strong style="color:#94a3b8">Live Games</strong> tab.</p>`;
     el.appendChild(sec);
-
-    // Show open lobbies to join
-    const openLobbies = LIVE_GAMES.filter(g => g.status === "lobby");
-    if (openLobbies.length) {{
-      const sec2 = document.createElement("div"); sec2.className = "host-section";
-      sec2.innerHTML = `<div class="host-section-title">OPEN LOBBIES</div>` +
-        openLobbies.map(g => `
-          <div class="player-card">
-            <div class="player-card-name">🏛️ ${{g.host}}'s lobby</div>
-            <span style="font-size:10px;color:#475569">${{g.players.length}} players · ${{g.difficulty}}</span>
-            <button class="btn btn-primary" style="padding:5px 12px;font-size:10px" onclick="joinLobby('${{g.host_id}}')">Join</button>
-          </div>`).join("");
-      el.appendChild(sec2);
-    }}
     return;
   }}
 
@@ -1237,16 +1276,32 @@ if (LOGGED_IN_ID && LOGGED_IN_NAME) {{
 // ── Settings Modal ─────────────────────────────────────────────────────────
 function openSettingsModal() {{
   const mc = document.getElementById("modalContainer");
+  const myData = LB_DATA[LOGGED_IN_ID] || {{}};
+  const myPrefs = PLAYER_PREFS[LOGGED_IN_ID] || {{}};
+  const unlockedTitles = TITLES.filter(t => !t.req || t.req(myData));
+  const colours = ["#f97316","#3b82f6","#a855f7","#22c55e","#ef4444","#eab308","#06b6d4","#ec4899","#f43f5e","#10b981","#8b5cf6","#0ea5e9","#ffffff","#94a3b8"];
+  const currentColour = myPrefs.colour || "#f97316";
+  const currentTitle = myPrefs.title || "";
   mc.innerHTML = `
     <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
       <div class="modal">
         <div class="modal-title">⚙️ My Settings</div>
         <label class="form-label">DISPLAY NAME</label>
         <input class="form-input" id="settingName" placeholder="Your display name" value="${{DISPLAY_NAME || LOGGED_IN_NAME}}">
+        <label class="form-label">PLAYER COLOUR</label>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+          ${{colours.map(c => `<div onclick="selectColour('${{c}}')" id="col-${{c.replace('#','')}}" style="width:28px;height:28px;border-radius:50%;background:${{c}};cursor:pointer;border:3px solid ${{c===currentColour?'#fff':'transparent'}};transition:border 0.15s"></div>`).join("")}}
+        </div>
+        <input type="hidden" id="settingColour" value="${{currentColour}}">
+        <label class="form-label">TITLE</label>
+        <select class="form-select" id="settingTitle">
+          <option value="">— None —</option>
+          ${{unlockedTitles.map(t => `<option value="${{t.id}}"${{t.id===currentTitle?" selected":""}}>${{t.label}}</option>`).join("")}}
+        </select>
         <label class="form-label">FAVOURITE CIV</label>
         <select class="form-select" id="settingCiv">
           <option value="">— None —</option>
-          ${{ALL_CIVS.map(c => `<option value="${{c}}"${{c===FAV_CIV?" selected":""}}>${{c}}</option>`).join("")}}
+          ${{ALL_CIVS.map(c => `<option value="${{c}}"${{c===(myPrefs.fav_civ||FAV_CIV)?" selected":""}}>${{c}}</option>`).join("")}}
         </select>
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
           <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
@@ -1254,6 +1309,13 @@ function openSettingsModal() {{
         </div>
       </div>
     </div>`;
+}}
+
+function selectColour(c) {{
+  document.getElementById("settingColour").value = c;
+  document.querySelectorAll("[id^='col-']").forEach(el => el.style.border = "3px solid transparent");
+  const el = document.getElementById("col-" + c.replace("#",""));
+  if (el) el.style.border = "3px solid #fff";
 }}
 
 async function saveSettings() {{
@@ -1421,10 +1483,15 @@ async def handle_api_prefs(request):
     if user_id not in data["players"]:
         return web.Response(text="Player not found", status=404)
     data["players"][user_id].setdefault("prefs", {})
+    colour = body.get("colour", "")
+    title  = body.get("title", "")
     if display_name:
         data["players"][user_id]["prefs"]["display_name"] = display_name
         data["players"][user_id]["name"] = display_name
     data["players"][user_id]["prefs"]["fav_civ"] = fav_civ
+    if colour:
+        data["players"][user_id]["prefs"]["colour"] = colour
+    data["players"][user_id]["prefs"]["title"] = title
     save_all_data(all_data)
     return web.Response(text="OK")
 
