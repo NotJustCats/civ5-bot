@@ -191,21 +191,25 @@ def guild_id_from(interaction: discord.Interaction) -> str:
 # ── Web server ────────────────────────────────────────────────────────────────
 def build_graph_html(guild_id: str) -> str:
     all_data = load_all_data()
-    data = all_data.get(guild_id, {"players": {}, "matches": []})
+    data = all_data.get(guild_id, {"players": {}, "matches": [], "active_games": {}, "game_groups": {}, "lobbies": {}})
     matches = data.get("matches", [])
     players = data.get("players", {})
+    active_games = data.get("active_games", {})
+    game_groups = data.get("game_groups", {})
+    lobbies = data.get("lobbies", {})
 
+    # Build Elo timeline
     active_ids = set()
     for m in matches:
         for p in m.get("players", []):
             active_ids.add(p["id"])
 
-    # Build Elo timeline
     current_elo = {pid: 1000 for pid in active_ids}
     timeline = [{"label": "Start", **{pid: 1000 for pid in active_ids}}]
     sorted_matches = sorted(matches, key=lambda m: m.get("played_at", ""))
     game_num = 0
-    for match in sorted_matches:
+    match_index = {}  # label -> match index for click-through
+    for i, match in enumerate(sorted_matches):
         date_str = match.get("played_at", "")[:10]
         if match.get("type") == "reset":
             for pid in active_ids:
@@ -217,113 +221,125 @@ def build_graph_html(guild_id: str) -> str:
         for p in match.get("players", []):
             if p["id"] in active_ids:
                 current_elo[p["id"]] = p["elo_after"]
-        timeline.append({"label": f"G{game_num} ({date_str})", **{pid: current_elo[pid] for pid in active_ids}})
+        label = f"G{game_num} ({date_str})"
+        timeline.append({"label": label, **{pid: current_elo[pid] for pid in active_ids}})
+        match_index[label] = i
 
     player_list = [
-        {
-            "id": pid,
-            "name": players.get(pid, {}).get("name", f"Player {i+1}"),
-            "finalElo": players.get(pid, {}).get("elo", 1000)
-        }
+        {"id": pid, "name": players.get(pid, {}).get("name", f"Player {i+1}"), "finalElo": players.get(pid, {}).get("elo", 1000)}
         for i, pid in enumerate(sorted(active_ids, key=lambda x: players.get(x, {}).get("elo", 0), reverse=True))
     ]
 
-    # Build civ play counts for pie chart (top 12)
+    # Pie chart data
     civ_counts = {}
     for m in sorted_matches:
-        if m.get("type") in ("reset", None):
-            continue
+        if m.get("type") in ("reset", None): continue
         for p in m.get("players", []):
             civ = p.get("civ")
-            if civ:
-                civ_counts[civ] = civ_counts.get(civ, 0) + 1
+            if civ: civ_counts[civ] = civ_counts.get(civ, 0) + 1
     top_civs = sorted(civ_counts.items(), key=lambda x: x[1], reverse=True)[:12]
     pie_labels = [c for c, _ in top_civs]
     pie_values = [v for _, v in top_civs]
 
-    # Build per-player profile data
+    # Per-player profile data
     COASTAL_SET = {"Australia","Brunei","Carthage","Chile","Denmark","England",
         "Indonesia","Japan","Kilwa","Korea","Netherlands","New Zealand",
         "Norway","Oman","Philippines","Phoenicia","Polynesia","Portugal","Spain",
         "Tonga","Tunisia","UAE","Venice"}
-
     lb_data = {}
     for pid in active_ids:
         p = players.get(pid, {})
         civs = p.get("civs", {})
-
         def civ_wr(item):
-            v = item[1]
-            g = v["wins"] + v["losses"]
+            v = item[1]; g = v["wins"] + v["losses"]
             return v["wins"] / g if g > 0 else 0
         top_p_civs = sorted(civs.items(), key=civ_wr, reverse=True)[:5]
-
-        coastal_games = 0
-        land_games = 0
+        coastal_games = land_games = 0
         peak_elo = 1000
-        big_game_win = False
-        played_8 = False
-        unique_civs = set()
-        win_civs = set()
-
-        for m in sorted_matches:
-            if m.get("type") in ("reset", None):
-                continue
-            game_players = m.get("players", [])
-            game_size = len(game_players)
-            for mp in game_players:
-                if mp["id"] == pid:
-                    civ_name = mp.get("civ")
-                    finish = mp.get("finish", 99)
-                    elo_after = mp.get("elo_after", 1000)
-
-                    if civ_name:
-                        unique_civs.add(civ_name)
-                        if finish == 1:
-                            win_civs.add(civ_name)
-                        if civ_name in COASTAL_SET:
-                            coastal_games += 1
-                        else:
-                            land_games += 1
-
-                    if elo_after > peak_elo:
-                        peak_elo = elo_after
-                    if finish == 1 and game_size >= 6:
-                        big_game_win = True
-                    if game_size >= 8:
-                        played_8 = True
-
-        # Count victory types and difficulty wins
+        big_game_win = played_8 = False
+        unique_civs = set(); win_civs = set()
         victory_counts = {"Domination": 0, "Science": 0, "Culture": 0, "Diplomatic": 0}
         difficulty_wins = {"Prince": 0, "King": 0}
-
         for m in sorted_matches:
-            if m.get("type") in ("reset", None):
-                continue
+            if m.get("type") in ("reset", None): continue
             game_players = m.get("players", [])
+            game_size = len(game_players)
             winner_id = next((mp["id"] for mp in game_players if mp.get("finish") == 1), None)
             if winner_id == pid:
                 vtype = m.get("victory_type")
                 diff = m.get("difficulty", "Prince")
-                if vtype in victory_counts:
-                    victory_counts[vtype] += 1
-                if diff in difficulty_wins:
-                    difficulty_wins[diff] += 1
-
+                if vtype in victory_counts: victory_counts[vtype] += 1
+                if diff in difficulty_wins: difficulty_wins[diff] += 1
+            for mp in game_players:
+                if mp["id"] == pid:
+                    civ_name = mp.get("civ"); finish = mp.get("finish", 99)
+                    elo_after = mp.get("elo_after", 1000)
+                    if civ_name:
+                        unique_civs.add(civ_name)
+                        if finish == 1: win_civs.add(civ_name)
+                        if civ_name in COASTAL_SET: coastal_games += 1
+                        else: land_games += 1
+                    if elo_after > peak_elo: peak_elo = elo_after
+                    if finish == 1 and game_size >= 6: big_game_win = True
+                    if game_size >= 8: played_8 = True
         lb_data[pid] = {
-            "wins": p.get("wins", 0),
-            "losses": p.get("losses", 0),
+            "wins": p.get("wins", 0), "losses": p.get("losses", 0),
             "top_civs": [{"civ": c, "wins": v["wins"], "losses": v["losses"]} for c, v in top_p_civs],
-            "coastal_games": coastal_games,
-            "land_games": land_games,
-            "unique_civs": len(unique_civs),
-            "win_civs": len(win_civs),
-            "peak_elo": peak_elo,
-            "big_game_win": big_game_win,
-            "played_8": played_8,
-            "victory_counts": victory_counts,
-            "difficulty_wins": difficulty_wins,
+            "coastal_games": coastal_games, "land_games": land_games,
+            "unique_civs": len(unique_civs), "win_civs": len(win_civs),
+            "peak_elo": peak_elo, "big_game_win": big_game_win, "played_8": played_8,
+            "victory_counts": victory_counts, "difficulty_wins": difficulty_wins,
         }
+
+    # History data (most recent first)
+    history = []
+    for i, m in enumerate(reversed(sorted_matches)):
+        if m.get("type") == "reset": continue
+        orig_idx = len(sorted_matches) - 1 - list(reversed(sorted_matches)).index(m)
+        game_ps = m.get("players", [])
+        winner = next((mp for mp in game_ps if mp.get("finish") == 1), None)
+        winner_name = players.get(winner["id"], {}).get("name", "?") if winner else "?"
+        winner_civ = winner.get("civ", "?") if winner else "?"
+        draft_pools = m.get("draft_pools", {})
+        history.append({
+            "idx": orig_idx,
+            "label": f"G{len(sorted_matches) - list(reversed(sorted_matches)).index(m)}",
+            "date": m.get("played_at", "")[:10],
+            "type": m.get("type", "?"),
+            "difficulty": m.get("difficulty", "Prince"),
+            "map_type": m.get("map_type", "any"),
+            "victory_type": m.get("victory_type", None),
+            "winner_name": winner_name,
+            "winner_civ": winner_civ,
+            "draft_pools": draft_pools,
+            "players": [{"id": mp.get("id",""), "name": players.get(mp["id"], {}).get("name", "?"), "civ": mp.get("civ","?"), "finish": mp.get("finish",0), "elo_before": mp.get("elo_before",1000), "elo_after": mp.get("elo_after",1000)} for mp in sorted(game_ps, key=lambda x: x.get("finish",99))],
+        })
+
+    # Live games data
+    live_games = []
+    for game_id, group in game_groups.items():
+        host_name = players.get(game_id, {}).get("name", group.get("player_names", ["?"])[0])
+        picks = group.get("picks", {})
+        draft = group.get("draft", {})
+        ps = []
+        for pid, name in zip(group.get("players", []), group.get("player_names", [])):
+            chosen = picks.get(pid)
+            pool = draft.get(pid, []) if draft else []
+            ps.append({"name": name, "chosen": chosen, "pool": pool})
+        live_games.append({
+            "host": host_name,
+            "difficulty": group.get("difficulty", "Prince"),
+            "map_type": group.get("map_type", "any"),
+            "players": ps,
+        })
+    # Also include open lobbies
+    for host_id, lobby in lobbies.items():
+        live_games.append({
+            "host": lobby.get("host_name", "?"),
+            "difficulty": lobby.get("difficulty", "Prince"),
+            "status": "lobby",
+            "players": [{"name": n, "chosen": None, "pool": []} for n in lobby.get("player_names", [])],
+        })
 
     import json as _json
     timeline_json = _json.dumps(timeline)
@@ -331,13 +347,16 @@ def build_graph_html(guild_id: str) -> str:
     pie_labels_json = _json.dumps(pie_labels)
     pie_values_json = _json.dumps(pie_values)
     lb_data_json = _json.dumps(lb_data)
+    history_json = _json.dumps(history)
+    live_games_json = _json.dumps(live_games)
+    match_index_json = _json.dumps(match_index)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Civ 5 Ranked — Stats</title>
+<title>Civ 5 Ranked</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
@@ -347,57 +366,101 @@ def build_graph_html(guild_id: str) -> str:
   .topbar {{ display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; height: 40px; }}
   h1 {{ font-family: 'Cinzel', serif; font-size: 20px; color: #f97316; letter-spacing: 3px; text-shadow: 0 0 30px rgba(249,115,22,0.4); }}
   .subtitle {{ color: #475569; font-size: 10px; letter-spacing: 2px; }}
+  .tabs {{ display: flex; gap: 4px; flex-shrink: 0; border-bottom: 1px solid #1e2130; padding-bottom: 0; }}
+  .tab {{ padding: 7px 16px; cursor: pointer; font-size: 11px; letter-spacing: 1px; color: #475569; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all 0.15s; }}
+  .tab.active {{ color: #f97316; border-bottom-color: #f97316; }}
+  .tab:hover {{ color: #94a3b8; }}
+  .page {{ display: none; flex: 1; overflow: hidden; min-height: 0; }}
+  .page.active {{ display: flex; flex-direction: column; }}
+  /* Stats page */
   .player-grid {{ display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; overflow: hidden; max-height: 72px; }}
-  .player-btn {{ border-radius: 8px; padding: 6px 12px; cursor: pointer; border-width: 1px; border-style: solid; background: transparent; font-family: 'IBM Plex Mono', monospace; transition: opacity 0.15s; text-align: left; }}
-  .player-btn.hidden {{ opacity: 0.3; }}
-  .player-btn.profile-active {{ opacity: 1; box-shadow: 0 0 0 2px currentColor; }}
+  .player-btn {{ border-radius: 8px; padding: 6px 12px; cursor: pointer; border-width: 1px; border-style: solid; background: transparent; font-family: 'IBM Plex Mono', monospace; transition: all 0.15s; text-align: left; }}
+  .player-btn.profile-active {{ box-shadow: 0 0 0 2px currentColor; }}
   .player-name {{ font-weight: 600; font-size: 12px; }}
   .player-elo {{ font-size: 10px; color: #64748b; margin-top: 2px; }}
-  .rank-toggle {{ display: flex; align-items: center; gap: 6px; color: #475569; font-size: 10px; cursor: pointer; flex-shrink: 0; }}
+  .rank-toggle {{ display: flex; align-items: center; gap: 6px; color: #475569; font-size: 10px; cursor: pointer; flex-shrink: 0; margin-bottom: 6px; }}
   .main-grid {{ display: grid; grid-template-columns: 1.4fr 1fr; grid-template-rows: 1fr 1fr; gap: 10px; flex: 1; overflow: hidden; min-height: 0; }}
   .card {{ background: #0d1017; border: 1px solid #1e2130; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }}
   .card-elo {{ grid-row: 1 / 3; }}
-  .card-profile {{ grid-column: 2; grid-row: 1 / 3; }}
   .card-title {{ color: #94a3b8; font-size: 10px; letter-spacing: 2px; margin-bottom: 10px; flex-shrink: 0; }}
   .chart-wrap {{ flex: 1; position: relative; overflow: hidden; min-height: 0; }}
   .chart-wrap canvas {{ position: absolute; top: 0; left: 0; width: 100% !important; height: 100% !important; }}
   .lb-list {{ flex: 1; overflow-y: auto; min-height: 0; }}
-  .lb-row {{ display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #1a1f2e; }}
+  .lb-row {{ display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid #1a1f2e; cursor: pointer; }}
+  .lb-row:hover {{ background: #0f1420; border-radius: 4px; padding-left: 4px; padding-right: 4px; }}
   .empty {{ text-align: center; color: #334155; padding: 40px; font-size: 12px; }}
-  @media (max-width: 800px) {{
-    html, body {{ overflow: auto; height: auto; }}
-    .main-grid {{ grid-template-columns: 1fr; grid-template-rows: 400px 300px 300px; overflow: visible; }}
-    .card-elo {{ grid-row: auto; }}
-  }}
+  /* Live & History pages */
+  .scroll-page {{ flex: 1; overflow-y: auto; min-height: 0; padding-right: 4px; }}
+  .game-card {{ background: #0d1017; border: 1px solid #1e2130; border-radius: 10px; padding: 14px; margin-bottom: 10px; }}
+  .game-header {{ display: flex; align-items: center; justify-content: space-between; cursor: pointer; }}
+  .game-title {{ font-size: 13px; font-weight: 600; color: #e2e8f0; }}
+  .game-meta {{ font-size: 10px; color: #475569; margin-top: 3px; }}
+  .game-body {{ margin-top: 12px; border-top: 1px solid #1e2130; padding-top: 12px; display: none; }}
+  .game-body.open {{ display: block; }}
+  .player-row {{ display: flex; align-items: center; gap: 10px; padding: 5px 0; border-bottom: 1px solid #1a1f2e; font-size: 11px; }}
+  .badge {{ font-size: 9px; padding: 2px 6px; border-radius: 4px; background: #1e2130; color: #94a3b8; }}
+  .badge.coastal {{ background: #0c2030; color: #06b6d4; }}
+  .badge.land {{ background: #0c2010; color: #22c55e; }}
+  .badge.dom {{ background: #200c0c; color: #ef4444; }}
+  .badge.sci {{ background: #0c1a20; color: #3b82f6; }}
+  .badge.cul {{ background: #200c20; color: #a855f7; }}
+  .badge.dip {{ background: #1a1a0c; color: #eab308; }}
+  .chevron {{ font-size: 10px; color: #475569; transition: transform 0.15s; }}
+  .chevron.open {{ transform: rotate(180deg); }}
+  .pool-label {{ font-size: 9px; color: #334155; letter-spacing: 1px; margin: 8px 0 4px; }}
+  .pool-civs {{ display: flex; flex-wrap: wrap; gap: 4px; }}
+  .pool-civ {{ font-size: 9px; padding: 2px 6px; border-radius: 4px; background: #0f1420; color: #475569; }}
+  .pool-civ.chosen {{ background: #1a2a1a; color: #22c55e; border: 1px solid #22c55e44; }}
+  .hist-elo {{ font-size: 10px; color: #475569; }}
+  .hist-elo.pos {{ color: #22c55e; }}
+  .hist-elo.neg {{ color: #ef4444; }}
+  .no-games {{ text-align: center; color: #334155; padding: 60px; font-size: 12px; letter-spacing: 1px; }}
 </style>
 </head>
 <body>
 <div class="topbar">
-  <div>
-    <h1>CIV 5 RANKED STATS</h1>
-    <p class="subtitle">LIVE DATA · REFRESH FOR LATEST</p>
-  </div>
-  <label class="rank-toggle"><input type="checkbox" id="rankToggle" checked onchange="toggleRanks()"> RANK LINES</label>
+  <div><h1>CIV 5 RANKED</h1><p class="subtitle">LIVE DATA · REFRESH FOR LATEST</p></div>
 </div>
 
-<div class="player-grid" id="playerGrid"></div>
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('stats')">STATS</div>
+  <div class="tab" onclick="switchTab('live')">LIVE GAMES</div>
+  <div class="tab" onclick="switchTab('history')">HISTORY</div>
+</div>
 
-<div class="main-grid">
-  <div class="card card-elo" id="eloCard">
-    <p class="card-title">ELO PROGRESSION OVER TIME</p>
-    <div class="chart-wrap"><canvas id="eloChart"></canvas></div>
+<!-- STATS PAGE -->
+<div class="page active" id="page-stats">
+  <div style="display:flex;align-items:center;justify-content:space-between;flex-shrink:0;margin-bottom:8px">
+    <div class="player-grid" id="playerGrid"></div>
+    <label class="rank-toggle" style="flex-shrink:0;margin-left:12px"><input type="checkbox" id="rankToggle" checked onchange="toggleRanks()"> RANK LINES</label>
   </div>
-  <div class="card" id="pieCard">
-    <p class="card-title">MOST PLAYED CIVILIZATIONS</p>
-    <div class="chart-wrap"><canvas id="pieChart"></canvas></div>
+  <div class="main-grid">
+    <div class="card card-elo">
+      <p class="card-title">ELO PROGRESSION OVER TIME</p>
+      <div class="chart-wrap"><canvas id="eloChart"></canvas></div>
+    </div>
+    <div class="card" id="pieCard">
+      <p class="card-title">MOST PLAYED CIVILIZATIONS</p>
+      <div class="chart-wrap"><canvas id="pieChart"></canvas></div>
+    </div>
+    <div class="card" id="lbCard">
+      <p class="card-title">LEADERBOARD</p>
+      <div class="lb-list" id="lbList"></div>
+    </div>
+    <div class="card" id="profileCard" style="display:none;grid-column:2;grid-row:1/3;">
+      <div style="flex:1;overflow-y:auto;min-height:0;" id="profileContent"></div>
+    </div>
   </div>
-  <div class="card" id="lbCard">
-    <p class="card-title">LEADERBOARD</p>
-    <div class="lb-list" id="lbList"></div>
-  </div>
-  <div class="card" id="profileCard" style="display:none;grid-column:2;grid-row:1/3;overflow:hidden;">
-    <div style="flex:1;overflow-y:auto;min-height:0;" id="profileContent"></div>
-  </div>
+</div>
+
+<!-- LIVE GAMES PAGE -->
+<div class="page" id="page-live">
+  <div class="scroll-page" id="liveContent"></div>
+</div>
+
+<!-- HISTORY PAGE -->
+<div class="page" id="page-history">
+  <div class="scroll-page" id="historyContent"></div>
 </div>
 
 <script>
@@ -406,7 +469,39 @@ const PLAYERS = {players_json};
 const PIE_LABELS = {pie_labels_json};
 const PIE_VALUES = {pie_values_json};
 const LB_DATA = {lb_data_json};
+const HISTORY = {history_json};
+const LIVE_GAMES = {live_games_json};
+const MATCH_INDEX = {match_index_json};
 const PALETTE = ["#f97316","#3b82f6","#a855f7","#22c55e","#ef4444","#eab308","#06b6d4","#ec4899","#f43f5e","#10b981","#8b5cf6","#0ea5e9"];
+
+const ACHIEVEMENTS = [
+  {{id:"civ10",    icon:"🗺️", name:"Explorer",          desc:"Play 10 different civs",          check: d => d.unique_civs >= 10}},
+  {{id:"civ20",    icon:"🌍", name:"World Traveller",   desc:"Play 20 different civs",          check: d => d.unique_civs >= 20}},
+  {{id:"winciv5",  icon:"⚔️", name:"Tactician",         desc:"Win with 5 different civs",       check: d => d.win_civs >= 5}},
+  {{id:"winciv10", icon:"🏛️", name:"Polymath",          desc:"Win with 10 different civs",      check: d => d.win_civs >= 10}},
+  {{id:"coastal",  icon:"⛵", name:"Sea Dog",            desc:"Play a coastal game",             check: d => d.coastal_games >= 1}},
+  {{id:"land",     icon:"🏕️", name:"Landlubber",         desc:"Play a land game",                check: d => d.land_games >= 1}},
+  {{id:"rprince",  icon:"⚙️", name:"Prince",             desc:"Reach Prince rank",               check: d => d.peak_elo >= 1100}},
+  {{id:"rking",    icon:"🛡️", name:"King",               desc:"Reach King rank",                 check: d => d.peak_elo >= 1250}},
+  {{id:"remperor", icon:"⚔️", name:"Emperor",            desc:"Reach Emperor rank",              check: d => d.peak_elo >= 1400}},
+  {{id:"rdeity",   icon:"🏆", name:"Deity",              desc:"Reach Deity rank",                check: d => d.peak_elo >= 1600}},
+  {{id:"dprince",  icon:"👑", name:"Prince",             desc:"Win a game on Prince difficulty", check: d => (d.difficulty_wins?.Prince || 0) >= 1}},
+  {{id:"dking",    icon:"🏰", name:"King",               desc:"Win a game on King difficulty",   check: d => (d.difficulty_wins?.King || 0) >= 1}},
+  {{id:"dom1",     icon:"⚔️", name:"Domination I",       desc:"Win 1 Domination victory",        check: d => (d.victory_counts?.Domination || 0) >= 1}},
+  {{id:"dom5",     icon:"⚔️", name:"Domination V",       desc:"Win 5 Domination victories",      check: d => (d.victory_counts?.Domination || 0) >= 5}},
+  {{id:"dom10",    icon:"⚔️", name:"Domination X",       desc:"Win 10 Domination victories",     check: d => (d.victory_counts?.Domination || 0) >= 10}},
+  {{id:"sci1",     icon:"🚀", name:"Science I",          desc:"Win 1 Science victory",           check: d => (d.victory_counts?.Science || 0) >= 1}},
+  {{id:"sci5",     icon:"🚀", name:"Science V",          desc:"Win 5 Science victories",         check: d => (d.victory_counts?.Science || 0) >= 5}},
+  {{id:"sci10",    icon:"🚀", name:"Science X",          desc:"Win 10 Science victories",        check: d => (d.victory_counts?.Science || 0) >= 10}},
+  {{id:"cul1",     icon:"🎭", name:"Culture I",          desc:"Win 1 Culture victory",           check: d => (d.victory_counts?.Culture || 0) >= 1}},
+  {{id:"cul5",     icon:"🎭", name:"Culture V",          desc:"Win 5 Culture victories",         check: d => (d.victory_counts?.Culture || 0) >= 5}},
+  {{id:"cul10",    icon:"🎭", name:"Culture X",          desc:"Win 10 Culture victories",        check: d => (d.victory_counts?.Culture || 0) >= 10}},
+  {{id:"dip1",     icon:"🕊️", name:"Diplomatic I",       desc:"Win 1 Diplomatic victory",        check: d => (d.victory_counts?.Diplomatic || 0) >= 1}},
+  {{id:"dip5",     icon:"🕊️", name:"Diplomatic V",       desc:"Win 5 Diplomatic victories",      check: d => (d.victory_counts?.Diplomatic || 0) >= 5}},
+  {{id:"dip10",    icon:"🕊️", name:"Diplomatic X",       desc:"Win 10 Diplomatic victories",     check: d => (d.victory_counts?.Diplomatic || 0) >= 10}},
+  {{id:"big6",     icon:"👥", name:"Grand Victor",       desc:"Win a 6+ player game",            check: d => d.big_game_win}},
+  {{id:"full8",    icon:"🎖️", name:"Full House",         desc:"Play in an 8-player game",        check: d => d.played_8}},
+];
 
 function rankLabel(elo) {{
   if (elo>=1600) return "🏆 Deity";
@@ -417,311 +512,253 @@ function rankLabel(elo) {{
   return "🪨 Settler";
 }}
 
-// ── Elo line chart ────────────────────────────────────────────────────────────
-if (!PLAYERS.length) {{
-  document.getElementById("eloCard").innerHTML = '<p class="empty">No matches played yet in this server.</p>';
-  document.getElementById("pieCard").innerHTML = '<p class="empty">No civ data yet.</p>';
-}} else {{
-  const hidden = new Set();
-  const labels = TIMELINE.map(t => t.label);
-  const datasets = PLAYERS.map((p, i) => ({{
-    label: p.name,
-    data: TIMELINE.map(t => t[p.id] ?? null),
-    borderColor: PALETTE[i % PALETTE.length],
-    backgroundColor: PALETTE[i % PALETTE.length],
-    borderWidth: 2.5, pointRadius: 4, pointHoverRadius: 7, tension: 0.3,
-  }}));
+function victoryBadge(vt) {{
+  if (!vt) return "";
+  const cls = {{Domination:"dom",Science:"sci",Culture:"cul",Diplomatic:"dip"}}[vt]||"";
+  const icon = {{Domination:"⚔️",Science:"🚀",Culture:"🎭",Diplomatic:"🕊️"}}[vt]||"";
+  return `<span class="badge ${{cls}}">${{icon}} ${{vt}}</span>`;
+}}
 
-  const eloCtx = document.getElementById("eloChart").getContext("2d");
-  const eloChart = new Chart(eloCtx, {{
+// ── Tab switching ─────────────────────────────────────────────────────────────
+function switchTab(name) {{
+  document.querySelectorAll(".tab").forEach((t,i) => {{
+    const names = ["stats","live","history"];
+    t.classList.toggle("active", names[i] === name);
+  }});
+  document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+  document.getElementById("page-"+name).classList.add("active");
+  if (name === "live") buildLive();
+  if (name === "history") buildHistory();
+}}
+
+// ── Elo chart ─────────────────────────────────────────────────────────────────
+let activeProfile = null;
+const pieCard = document.getElementById("pieCard");
+const lbCard  = document.getElementById("lbCard");
+const profileCard = document.getElementById("profileCard");
+const profileContent = document.getElementById("profileContent");
+
+const hidden = new Set();
+let eloChart;
+if (PLAYERS.length) {{
+  eloChart = new Chart(document.getElementById("eloChart").getContext("2d"), {{
     type: "line",
-    data: {{ labels, datasets }},
+    data: {{
+      labels: TIMELINE.map(t => t.label),
+      datasets: PLAYERS.map((p,i) => ({{
+        label: p.name,
+        data: TIMELINE.map(t => t[p.id] ?? null),
+        borderColor: PALETTE[i%PALETTE.length],
+        backgroundColor: PALETTE[i%PALETTE.length],
+        borderWidth: 2.5, pointRadius: 4, pointHoverRadius: 7, tension: 0.3, spanGaps: true,
+      }}))
+    }},
     options: {{
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: {{ mode: "index", intersect: false }},
+      responsive: true, maintainAspectRatio: false,
+      interaction: {{mode:"index",intersect:false}},
+      onClick: (evt, elements) => {{
+        if (!elements.length) return;
+        const label = TIMELINE[elements[0].index]?.label;
+        const idx = MATCH_INDEX[label];
+        if (idx !== undefined) showHistoryGame(idx);
+      }},
       plugins: {{
-        legend: {{ display: false }},
+        legend: {{display:false}},
         tooltip: {{
-          backgroundColor: "#0f1117", borderColor: "#2a2d3a", borderWidth: 1,
-          titleColor: "#64748b", bodyColor: "#e2e8f0",
-          titleFont: {{family:"IBM Plex Mono",size:11}},
-          bodyFont: {{family:"IBM Plex Mono",size:12}},
-          callbacks: {{ label: ctx => ` ${{ctx.dataset.label}}: ${{ctx.parsed.y}} Elo (${{rankLabel(ctx.parsed.y)}})` }}
+          backgroundColor:"#0f1117", borderColor:"#2a2d3a", borderWidth:1,
+          titleColor:"#64748b", bodyColor:"#e2e8f0",
+          titleFont:{{family:"IBM Plex Mono",size:11}}, bodyFont:{{family:"IBM Plex Mono",size:12}},
+          filter: item => item.parsed.y !== null,
+          callbacks: {{label: ctx => ctx.parsed.y !== null ? ` ${{ctx.dataset.label}}: ${{ctx.parsed.y}} (${{rankLabel(ctx.parsed.y)}})` : null}}
         }}
       }},
       scales: {{
-        x: {{ ticks: {{ color:"#475569", font:{{family:"IBM Plex Mono",size:10}} }}, grid: {{ color:"#1a1f2e" }} }},
-        y: {{ ticks: {{ color:"#475569", font:{{family:"IBM Plex Mono",size:10}} }}, grid: {{ color:"#1a1f2e" }}, min: 800 }}
+        x: {{ticks:{{color:"#475569",font:{{family:"IBM Plex Mono",size:9}}}},grid:{{color:"#1a1f2e"}}}},
+        y: {{ticks:{{color:"#475569",font:{{family:"IBM Plex Mono",size:9}}}},grid:{{color:"#1a1f2e"}},min:750}}
       }}
     }}
   }});
+}} else {{
+  document.getElementById("eloChart").parentElement.innerHTML = '<p class="empty">No matches yet</p>';
+}}
 
-  // Player toggle buttons
-  const grid = document.getElementById("playerGrid");
-  PLAYERS.forEach((p, i) => {{
-    const color = PALETTE[i % PALETTE.length];
-    const medals = ["🥇","🥈","🥉"];
-    const btn = document.createElement("button");
-    btn.className = "player-btn";
-    btn.style.borderColor = color;
-    btn.style.color = color;
-    btn.innerHTML = `<div class="player-name">${{medals[i] || "#"+(i+1)}} ${{p.name}}</div><div class="player-elo">${{p.finalElo}} Elo · ${{rankLabel(p.finalElo)}}</div>`;
-    btn.onclick = () => {{
-      if (activeProfile === p.id) {{
-        activeProfile = null;
-        btn.classList.remove("profile-active");
-        hideProfile();
-      }} else {{
-        document.querySelectorAll(".player-btn").forEach(b => b.classList.remove("profile-active"));
-        activeProfile = p.id;
-        btn.classList.add("profile-active");
-        showProfile(p, i);
-      }}
-    }};
-    grid.appendChild(btn);
+function toggleRanks() {{
+  if (eloChart) {{ eloChart.options.scales.y.min = document.getElementById("rankToggle").checked ? 750 : undefined; eloChart.update(); }}
+}}
+
+// ── Player buttons ────────────────────────────────────────────────────────────
+PLAYERS.forEach((p,i) => {{
+  const color = PALETTE[i%PALETTE.length];
+  const medals = ["🥇","🥈","🥉"];
+  const btn = document.createElement("button");
+  btn.className = "player-btn";
+  btn.style.borderColor = color; btn.style.color = color;
+  btn.innerHTML = `<div class="player-name">${{medals[i]||"#"+(i+1)}} ${{p.name}}</div><div class="player-elo">${{p.finalElo}} · ${{rankLabel(p.finalElo)}}</div>`;
+  btn.onclick = () => {{
+    if (activeProfile === p.id) {{ activeProfile=null; btn.classList.remove("profile-active"); hideProfile(); }}
+    else {{ document.querySelectorAll(".player-btn").forEach(b=>b.classList.remove("profile-active")); activeProfile=p.id; btn.classList.add("profile-active"); showProfile(p,i); }}
+  }};
+  document.getElementById("playerGrid").appendChild(btn);
+}});
+
+// ── Profile panel ─────────────────────────────────────────────────────────────
+function hideProfile() {{ profileCard.style.display="none"; pieCard.style.display="flex"; lbCard.style.display="flex"; }}
+
+function showProfile(p, idx) {{
+  const color = PALETTE[idx%PALETTE.length];
+  const d = LB_DATA[p.id]||{{}};
+  const wins=d.wins||0, losses=d.losses||0, total=wins+losses;
+  const wr=total>0?Math.round(wins/total*100):0;
+  const coastal=d.coastal_games||0, land=d.land_games||0, mapTotal=coastal+land;
+  const coastalPct=mapTotal>0?Math.round(coastal/mapTotal*100):0;
+  const topCivs=d.top_civs||[];
+  const unlocked=ACHIEVEMENTS.filter(a=>a.check(d)).length;
+  const civRows=topCivs.length>0?topCivs.map(c=>{{const g=c.wins+c.losses,cwr=g>0?Math.round(c.wins/g*100):0;return`<div class="lb-row"><div style="flex:1;font-size:11px;color:#e2e8f0">${{c.civ}}</div><div style="font-size:10px;color:#475569">${{c.wins}}W/${{c.losses}}L·${{cwr}}%</div></div>`;
+  }}).join(""):`<div style="color:#334155;font-size:11px;padding:8px 0">No civ data yet</div>`;
+  const achRows=ACHIEVEMENTS.map(a=>{{const ok=a.check(d);return`<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #1a1f2e;opacity:${{ok?1:0.3}}"><span style="font-size:16px;width:22px;text-align:center">${{a.icon}}</span><div style="flex:1"><div style="font-size:11px;font-weight:600;color:${{ok?"#e2e8f0":"#475569"}}">${{a.name}}</div><div style="font-size:9px;color:#475569;margin-top:1px">${{a.desc}}</div></div><span style="font-size:12px;color:${{ok?"#f97316":"#1e2130"}}">${{ok?"✓":"○"}}</span></div>`;
+  }}).join("");
+  profileContent.innerHTML=`
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px">
+      <div><div style="font-weight:700;font-size:16px;color:${{color}}">${{p.name}}</div><div style="font-size:11px;color:#94a3b8;margin-top:2px">${{rankLabel(p.finalElo)}} · ${{p.finalElo}} Elo</div></div>
+      <span style="font-size:10px;color:#475569;cursor:pointer;padding:4px 8px;border:1px solid #1e2130;border-radius:6px;flex-shrink:0" onclick="closeProfile()">✕ close</span>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:14px">
+      <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center"><div style="font-size:18px;font-weight:700;color:#e2e8f0">${{wins}}</div><div style="font-size:9px;color:#475569;margin-top:2px">WINS</div></div>
+      <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center"><div style="font-size:18px;font-weight:700;color:#e2e8f0">${{losses}}</div><div style="font-size:9px;color:#475569;margin-top:2px">LOSSES</div></div>
+      <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center"><div style="font-size:18px;font-weight:700;color:${{color}}">${{wr}}%</div><div style="font-size:9px;color:#475569;margin-top:2px">WIN RATE</div></div>
+    </div>
+    <div style="font-size:10px;color:#64748b;letter-spacing:1px;margin-bottom:6px">MAP PREFERENCE</div>
+    <div style="display:flex;gap:6px;margin-bottom:14px">
+      <div style="flex:1;background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center"><div style="font-size:14px;font-weight:700;color:#06b6d4">${{coastal}}</div><div style="font-size:9px;color:#475569;margin-top:2px">COASTAL (${{coastalPct}}%)</div></div>
+      <div style="flex:1;background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center"><div style="font-size:14px;font-weight:700;color:#22c55e">${{land}}</div><div style="font-size:9px;color:#475569;margin-top:2px">LAND (${{100-coastalPct}}%)</div></div>
+    </div>
+    <div style="font-size:10px;color:#64748b;letter-spacing:1px;margin-bottom:6px">TOP CIVS BY WIN RATE</div>
+    ${{civRows}}
+    <div style="font-size:10px;color:#64748b;letter-spacing:1px;margin:14px 0 6px">ACHIEVEMENTS (${{unlocked}}/${{ACHIEVEMENTS.length}})</div>
+    ${{achRows}}`;
+  pieCard.style.display="none"; lbCard.style.display="none"; profileCard.style.display="flex";
+}}
+
+function closeProfile() {{ activeProfile=null; document.querySelectorAll(".player-btn").forEach(b=>b.classList.remove("profile-active")); hideProfile(); }}
+
+// ── Leaderboard ───────────────────────────────────────────────────────────────
+function buildLeaderboard() {{
+  const lbList=document.getElementById("lbList"); if(!lbList)return;
+  const lbMedals=["🥇","🥈","🥉"];
+  PLAYERS.forEach((p,i)=>{{
+    const color=PALETTE[i%PALETTE.length],wins=LB_DATA[p.id]?.wins||0,losses=LB_DATA[p.id]?.losses||0;
+    const wr=(wins+losses)>0?Math.round(wins/(wins+losses)*100):0;
+    const row=document.createElement("div"); row.className="lb-row";
+    row.innerHTML=`<span style="font-size:18px;width:28px;text-align:center">${{lbMedals[i]||"#"+(i+1)}}</span><div style="flex:1"><div style="font-weight:600;font-size:13px;color:${{color}}">${{p.name}}</div><div style="font-size:10px;color:#475569;margin-top:3px">${{wins}}W/${{losses}}L·${{wr}}%WR</div></div><div style="text-align:right"><div style="font-weight:700;font-size:14px;color:#e2e8f0">${{p.finalElo}}</div><div style="font-size:10px;color:#475569;margin-top:2px">${{rankLabel(p.finalElo)}}</div></div>`;
+    row.onclick=()=>{{if(activeProfile===p.id){{activeProfile=null;hideProfile();}}else{{activeProfile=p.id;document.querySelectorAll(".player-btn").forEach(b=>b.classList.remove("profile-active"));const btns=document.querySelectorAll(".player-btn");if(btns[i])btns[i].classList.add("profile-active");showProfile(p,i);}}}};
+    lbList.appendChild(row);
   }});
+}}
+buildLeaderboard();
 
-  function toggleRanks() {{
-    eloChart.options.scales.y.min = document.getElementById("rankToggle").checked ? 800 : undefined;
-    eloChart.update();
-  }}
+// ── Pie chart ─────────────────────────────────────────────────────────────────
+if (PIE_LABELS.length) {{
+  new Chart(document.getElementById("pieChart").getContext("2d"),{{
+    type:"doughnut",
+    data:{{labels:PIE_LABELS,datasets:[{{data:PIE_VALUES,backgroundColor:PALETTE.concat(PALETTE),borderColor:"#080a0f",borderWidth:2,hoverOffset:6}}]}},
+    options:{{responsive:true,maintainAspectRatio:false,plugins:{{legend:{{position:"right",labels:{{color:"#94a3b8",font:{{family:"IBM Plex Mono",size:9}},boxWidth:10,padding:8}}}},tooltip:{{backgroundColor:"#0f1117",borderColor:"#2a2d3a",borderWidth:1,titleColor:"#64748b",bodyColor:"#e2e8f0",titleFont:{{family:"IBM Plex Mono",size:11}},bodyFont:{{family:"IBM Plex Mono",size:12}},callbacks:{{label:ctx=>` ${{ctx.label}}: ${{ctx.parsed}} games`}}}}}}}}
+  }});
+}} else {{
+  document.getElementById("pieCard").innerHTML='<p class="empty">No civ data yet</p>';
+}}
 
-  // ── Profile / Leaderboard panel switcher ─────────────────────────────────────
-  let activeProfile = null;
-  const lbCard = document.getElementById("lbCard");
-  const pieCard = document.getElementById("pieCard");
-  const profileCard = document.getElementById("profileCard");
-  const profileContent = document.getElementById("profileContent");
-
-  const ACHIEVEMENTS = [
-    // Civ variety
-    {{id:"civ10",    icon:"🗺️",  name:"Explorer",          desc:"Play 10 different civs",         check: d => d.unique_civs >= 10}},
-    {{id:"civ20",    icon:"🌍",  name:"World Traveller",   desc:"Play 20 different civs",         check: d => d.unique_civs >= 20}},
-    {{id:"winciv5",  icon:"⚔️",  name:"Tactician",         desc:"Win with 5 different civs",      check: d => d.win_civs >= 5}},
-    {{id:"winciv10", icon:"🏛️",  name:"Polymath",          desc:"Win with 10 different civs",     check: d => d.win_civs >= 10}},
-    // Map type
-    {{id:"coastal",  icon:"⛵",  name:"Sea Dog",            desc:"Play a coastal game",            check: d => d.coastal_games >= 1}},
-    {{id:"land",     icon:"🏕️",  name:"Landlubber",         desc:"Play a land game",               check: d => d.land_games >= 1}},
-    // Rank milestones
-    {{id:"rprince",  icon:"⚙️",  name:"Prince",             desc:"Reach Prince rank",              check: d => d.peak_elo >= 1100}},
-    {{id:"rking",    icon:"🛡️",  name:"King",               desc:"Reach King rank",                check: d => d.peak_elo >= 1250}},
-    {{id:"remperor", icon:"⚔️",  name:"Emperor",            desc:"Reach Emperor rank",             check: d => d.peak_elo >= 1400}},
-    {{id:"rdeity",   icon:"🏆",  name:"Deity",              desc:"Reach Deity rank",               check: d => d.peak_elo >= 1600}},
-    // Difficulty wins
-    {{id:"dprince",  icon:"👑",  name:"Prince",             desc:"Win a game on Prince difficulty", check: d => (d.difficulty_wins?.Prince || 0) >= 1}},
-    {{id:"dking",    icon:"🏰",  name:"King",               desc:"Win a game on King difficulty",   check: d => (d.difficulty_wins?.King || 0) >= 1}},
-    // Domination victories
-    {{id:"dom1",     icon:"⚔️",  name:"Domination I",       desc:"Win 1 Domination victory",       check: d => (d.victory_counts?.Domination || 0) >= 1}},
-    {{id:"dom5",     icon:"⚔️",  name:"Domination V",       desc:"Win 5 Domination victories",     check: d => (d.victory_counts?.Domination || 0) >= 5}},
-    {{id:"dom10",    icon:"⚔️",  name:"Domination X",       desc:"Win 10 Domination victories",    check: d => (d.victory_counts?.Domination || 0) >= 10}},
-    // Science victories
-    {{id:"sci1",     icon:"🚀",  name:"Science I",          desc:"Win 1 Science victory",          check: d => (d.victory_counts?.Science || 0) >= 1}},
-    {{id:"sci5",     icon:"🚀",  name:"Science V",          desc:"Win 5 Science victories",        check: d => (d.victory_counts?.Science || 0) >= 5}},
-    {{id:"sci10",    icon:"🚀",  name:"Science X",          desc:"Win 10 Science victories",       check: d => (d.victory_counts?.Science || 0) >= 10}},
-    // Culture victories
-    {{id:"cul1",     icon:"🎭",  name:"Culture I",          desc:"Win 1 Culture victory",          check: d => (d.victory_counts?.Culture || 0) >= 1}},
-    {{id:"cul5",     icon:"🎭",  name:"Culture V",          desc:"Win 5 Culture victories",        check: d => (d.victory_counts?.Culture || 0) >= 5}},
-    {{id:"cul10",    icon:"🎭",  name:"Culture X",          desc:"Win 10 Culture victories",       check: d => (d.victory_counts?.Culture || 0) >= 10}},
-    // Diplomatic victories
-    {{id:"dip1",     icon:"🕊️",  name:"Diplomatic I",       desc:"Win 1 Diplomatic victory",      check: d => (d.victory_counts?.Diplomatic || 0) >= 1}},
-    {{id:"dip5",     icon:"🕊️",  name:"Diplomatic V",       desc:"Win 5 Diplomatic victories",    check: d => (d.victory_counts?.Diplomatic || 0) >= 5}},
-    {{id:"dip10",    icon:"🕊️",  name:"Diplomatic X",       desc:"Win 10 Diplomatic victories",   check: d => (d.victory_counts?.Diplomatic || 0) >= 10}},
-    // Game size
-    {{id:"big6",     icon:"👥",  name:"Grand Victor",       desc:"Win a 6+ player game",           check: d => d.big_game_win}},
-    {{id:"full8",    icon:"🎖️",  name:"Full House",         desc:"Play in an 8-player game",       check: d => d.played_8}},
-  ];
-
-  function hideProfile() {{
-    profileCard.style.display = "none";
-    pieCard.style.display = "flex";
-    lbCard.style.display = "flex";
-  }}
-
-  function showLeaderboard() {{
-    hideProfile();
-  }}
-
-  function showProfile(p, idx) {{
-    const color = PALETTE[idx % PALETTE.length];
-    const d = LB_DATA[p.id] || {{}};
-    const wins = d.wins || 0;
-    const losses = d.losses || 0;
-    const total = wins + losses;
-    const wr = total > 0 ? Math.round(wins / total * 100) : 0;
-    const coastal = d.coastal_games || 0;
-    const land = d.land_games || 0;
-    const mapTotal = coastal + land;
-    const coastalPct = mapTotal > 0 ? Math.round(coastal / mapTotal * 100) : 0;
-    const topCivs = d.top_civs || [];
-
-    const civRows = topCivs.length > 0
-      ? topCivs.map(c => {{
-          const g = c.wins + c.losses;
-          const cwr = g > 0 ? Math.round(c.wins / g * 100) : 0;
-          return `<div class="lb-row">
-            <div style="flex:1;font-size:11px;color:#e2e8f0">${{c.civ}}</div>
-            <div style="font-size:10px;color:#475569">${{c.wins}}W/${{c.losses}}L · ${{cwr}}%</div>
-          </div>`;
-        }}).join("")
-      : `<div style="color:#334155;font-size:11px;padding:8px 0">No civ data yet</div>`;
-
-    const achRows = ACHIEVEMENTS.map(a => {{
-      const unlocked = a.check(d);
-      return `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #1a1f2e;opacity:${{unlocked ? 1 : 0.3}}">
-        <span style="font-size:18px;width:24px;text-align:center">${{a.icon}}</span>
-        <div style="flex:1">
-          <div style="font-size:11px;font-weight:600;color:${{unlocked ? "#e2e8f0" : "#475569"}}">${{a.name}}</div>
-          <div style="font-size:9px;color:#475569;margin-top:1px">${{a.desc}}</div>
-        </div>
-        <span style="font-size:11px;color:${{unlocked ? "#f97316" : "#1e2130"}}">${{unlocked ? "✓" : "○"}}</span>
-      </div>`;
-    }}).join("");
-
-    profileContent.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-shrink:0">
+// ── Live Games ────────────────────────────────────────────────────────────────
+function buildLive() {{
+  const el=document.getElementById("liveContent");
+  if(!LIVE_GAMES.length){{el.innerHTML='<p class="no-games">NO ACTIVE GAMES RIGHT NOW</p>';return;}}
+  el.innerHTML="";
+  LIVE_GAMES.forEach((g,gi)=>{{
+    const isLobby=g.status==="lobby";
+    const pickedCount=g.players.filter(p=>p.chosen).length;
+    const card=document.createElement("div"); card.className="game-card";
+    const liveMapLabel = {{"land":"🏕️ Land","coastal":"⛵ Coastal","any":"🌐 Any","skip":"No draft"}}[g.map_type]||"";
+    card.innerHTML=`
+      <div class="game-header" onclick="toggleGame('live-${{gi}}')">
         <div>
-          <div style="font-weight:700;font-size:16px;color:${{color}}">${{p.name}}</div>
-          <div style="font-size:11px;color:#94a3b8;margin-top:2px">${{rankLabel(p.finalElo)}} · ${{p.finalElo}} Elo</div>
+          <div class="game-title">${{isLobby?"🏛️ Open Lobby":"⚔️ Game In Progress"}} · Host: ${{g.host}}</div>
+          <div class="game-meta">${{g.players.length}} players · ${{g.difficulty}}${{liveMapLabel?" · "+liveMapLabel:""}}${{isLobby?"":" · "+pickedCount+"/"+g.players.length+" picked"}}</div>
         </div>
-        <span style="font-size:10px;color:#475569;cursor:pointer;padding:4px 8px;border:1px solid #1e2130;border-radius:6px" onclick="closeProfile()">✕ close</span>
+        <span class="chevron" id="chev-live-${{gi}}">▼</span>
       </div>
+      <div class="game-body" id="live-${{gi}}">
+        ${{g.players.map(p=>`
+          <div class="player-row">
+            <div style="flex:1;font-weight:600">${{p.name}}</div>
+            ${{p.chosen?`<span class="badge" style="color:#22c55e;background:#0c2010;border:1px solid #22c55e44">${{p.chosen}}</span>`:'<span class="badge">picking...</span>'}}
+          </div>
+          ${{p.pool.length?`<div class="pool-label">DRAFT POOL</div><div class="pool-civs">${{p.pool.map(c=>`<span class="pool-civ ${{c===p.chosen?"chosen":""}}">${{c}}</span>`).join("")}}</div>`:""}}`).join("")}}
+      </div>`;
+    el.appendChild(card);
+  }});
+}}
 
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:14px">
-        <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
-          <div style="font-size:18px;font-weight:700;color:#e2e8f0">${{wins}}</div>
-          <div style="font-size:9px;color:#475569;margin-top:2px">WINS</div>
+// ── History ───────────────────────────────────────────────────────────────────
+function buildHistory() {{
+  const el=document.getElementById("historyContent");
+  if(!HISTORY.length){{el.innerHTML='<p class="no-games">NO COMPLETED GAMES YET</p>';return;}}
+  el.innerHTML="";
+  HISTORY.forEach((g,gi)=>{{
+    const card=document.createElement("div"); card.className="game-card";
+    const vBadge=victoryBadge(g.victory_type);
+    const mapLabel = {{"land":"🏕️ Land","coastal":"⛵ Coastal","any":"🌐 Any","skip":"—"}}[g.map_type]||g.map_type||"";
+    card.innerHTML=`
+      <div class="game-header" onclick="toggleGame('hist-${{gi}}')">
+        <div>
+          <div class="game-title">${{g.label}} · ${{g.winner_name}} won${{g.winner_civ?" ("+g.winner_civ+")":""}}</div>
+          <div class="game-meta">${{g.date}} · ${{g.type}} · ${{g.difficulty}} · ${{mapLabel}} ${{vBadge}}</div>
         </div>
-        <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
-          <div style="font-size:18px;font-weight:700;color:#e2e8f0">${{losses}}</div>
-          <div style="font-size:9px;color:#475569;margin-top:2px">LOSSES</div>
-        </div>
-        <div style="background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
-          <div style="font-size:18px;font-weight:700;color:${{color}}">${{wr}}%</div>
-          <div style="font-size:9px;color:#475569;margin-top:2px">WIN RATE</div>
-        </div>
+        <span class="chevron" id="chev-hist-${{gi}}">▼</span>
       </div>
-
-      <div style="font-size:10px;color:#64748b;letter-spacing:1px;margin-bottom:6px">MAP PREFERENCE</div>
-      <div style="display:flex;gap:6px;margin-bottom:14px">
-        <div style="flex:1;background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
-          <div style="font-size:14px;font-weight:700;color:#06b6d4">${{coastal}}</div>
-          <div style="font-size:9px;color:#475569;margin-top:2px">COASTAL (${{coastalPct}}%)</div>
-        </div>
-        <div style="flex:1;background:#080a0f;border:1px solid #1e2130;border-radius:8px;padding:8px;text-align:center">
-          <div style="font-size:14px;font-weight:700;color:#22c55e">${{land}}</div>
-          <div style="font-size:9px;color:#475569;margin-top:2px">LAND (${{100 - coastalPct}}%)</div>
-        </div>
-      </div>
-
-      <div style="font-size:10px;color:#64748b;letter-spacing:1px;margin-bottom:6px">TOP CIVS BY WIN RATE</div>
-      ${{civRows}}
-
-      <div style="font-size:10px;color:#64748b;letter-spacing:1px;margin:14px 0 6px">ACHIEVEMENTS (${{ACHIEVEMENTS.filter(a => a.check(d)).length}}/${{ACHIEVEMENTS.length}})</div>
-      ${{achRows}}
-    `;
-
-    pieCard.style.display = "none";
-    lbCard.style.display = "none";
-    profileCard.style.display = "flex";
-  }}
-
-  function closeProfile() {{
-    activeProfile = null;
-    document.querySelectorAll(".player-btn").forEach(b => b.classList.remove("profile-active"));
-    hideProfile();
-  }}
-
-  // ── Pie chart ───────────────────────────────────────────────────────────────
-  if (PIE_LABELS.length) {{
-    const pieCtx = document.getElementById("pieChart").getContext("2d");
-    new Chart(pieCtx, {{
-      type: "doughnut",
-      data: {{
-        labels: PIE_LABELS,
-        datasets: [{{
-          data: PIE_VALUES,
-          backgroundColor: PALETTE.concat(PALETTE),
-          borderColor: "#080a0f",
-          borderWidth: 2,
-          hoverOffset: 8,
-        }}]
-      }},
-      options: {{
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {{
-          legend: {{
-            position: "right",
-            labels: {{
-              color: "#94a3b8",
-              font: {{family:"IBM Plex Mono", size:10}},
-              boxWidth: 12,
-              padding: 10,
-            }}
-          }},
-          tooltip: {{
-            backgroundColor: "#0f1117", borderColor: "#2a2d3a", borderWidth: 1,
-            titleColor: "#64748b", bodyColor: "#e2e8f0",
-            titleFont: {{family:"IBM Plex Mono",size:11}},
-            bodyFont: {{family:"IBM Plex Mono",size:12}},
-            callbacks: {{
-              label: ctx => ` ${{ctx.label}}: ${{ctx.parsed}} game${{ctx.parsed !== 1 ? "s" : ""}}`
-            }}
-          }}
-        }}
-      }}
+      <div class="game-body" id="hist-${{gi}}">
+        ${{g.players.map((p,pi)=>{{
+          const diff=p.elo_after-p.elo_before;
+          const sign=diff>=0?"+":"";
+          const cls=diff>=0?"pos":"neg";
+          const medal=["🥇","🥈","🥉"][pi]||"#"+(pi+1);
+          const pool=(g.draft_pools&&g.draft_pools[p.id])||[];
+          const poolHtml=pool.length?`<div class="pool-label">DRAFT POOL</div><div class="pool-civs">${{pool.map(c=>`<span class="pool-civ ${{c===p.civ?"chosen":""}}">${{c}}</span>`).join("")}}</div>`:"";
+          return`<div class="player-row"><span style="width:22px;text-align:center">${{medal}}</span><div style="flex:1;font-weight:600">${{p.name}}</div><span class="badge">${{p.civ||"?"}}</span><span class="hist-elo ${{cls}}" style="min-width:60px;text-align:right">${{p.elo_after}} (${{sign}}${{diff}})</span></div>${{poolHtml}}`;
+        }}).join("")}}
+      </div>`;
+    card.querySelector(".game-header").addEventListener("dblclick", ()=>{{
+      switchTab("stats");
+      setTimeout(()=>highlightGame(g.label),100);
     }});
-  }} else {{
-    document.getElementById("pieCard").innerHTML = '<p class="empty">No civ data yet.</p>';
-  }}
+    el.appendChild(card);
+  }});
+}}
 
-  // ── Leaderboard ─────────────────────────────────────────────────────────────
-  function buildLeaderboard() {{
-    const lbList = document.getElementById("lbList");
-    if (!lbList) return;
-    const lbMedals = ["🥇","🥈","🥉"];
-    PLAYERS.forEach((p, i) => {{
-      const color = PALETTE[i % PALETTE.length];
-      const wins = LB_DATA[p.id]?.wins || 0;
-      const losses = LB_DATA[p.id]?.losses || 0;
-      const total = wins + losses;
-      const wr = total > 0 ? Math.round(wins / total * 100) : 0;
-      const row = document.createElement("div");
-      row.className = "lb-row";
-      row.style.cursor = "pointer";
-      row.innerHTML = `
-        <span style="font-size:18px;width:28px;text-align:center">${{lbMedals[i] || "#"+(i+1)}}</span>
-        <div style="flex:1">
-          <div style="font-weight:600;font-size:13px;color:${{color}}">${{p.name}}</div>
-          <div style="font-size:10px;color:#475569;margin-top:3px">${{wins}}W / ${{losses}}L · ${{wr}}% WR</div>
-        </div>
-        <div style="text-align:right">
-          <div style="font-weight:700;font-size:14px;color:#e2e8f0">${{p.finalElo}}</div>
-          <div style="font-size:10px;color:#475569;margin-top:2px">${{rankLabel(p.finalElo)}}</div>
-        </div>
-      `;
-      row.onclick = () => {{
-        if (activeProfile === p.id) {{
-          activeProfile = null;
-          document.querySelectorAll(".player-btn").forEach(b => b.classList.remove("profile-active"));
-          hideProfile();
-        }} else {{
-          activeProfile = p.id;
-          document.querySelectorAll(".player-btn").forEach(b => b.classList.remove("profile-active"));
-          const btns = document.querySelectorAll(".player-btn");
-          if (btns[i]) btns[i].classList.add("profile-active");
-          showProfile(p, i);
-        }}
-      }};
-      lbList.appendChild(row);
-    }});
-  }}
-  buildLeaderboard();
+function showHistoryGame(idx) {{
+  switchTab("history");
+  setTimeout(()=>{{
+    const gi=HISTORY.findIndex(h=>h.idx===idx);
+    if(gi>=0){{const body=document.getElementById("hist-"+gi);if(body){{body.classList.add("open");document.getElementById("chev-hist-"+gi).classList.add("open");body.scrollIntoView({{behavior:"smooth",block:"center"}});}}}}
+  }},150);
+}}
+
+function highlightGame(label) {{
+  if(!eloChart) return;
+  const idx=TIMELINE.findIndex(t=>t.label===label);
+  if(idx<0) return;
+  eloChart.tooltip.setActiveElements(PLAYERS.map((_,di)=>{{return{{datasetIndex:di,index:idx}}}}),{{x:0,y:0}});
+  eloChart.update();
+}}
+
+function toggleGame(id) {{
+  const body=document.getElementById(id);
+  const chev=document.getElementById("chev-"+id);
+  body.classList.toggle("open");
+  chev.classList.toggle("open");
 }}
 </script>
 </body>
 </html>"""
+
 
 async def handle_graph(request):
     guild_id = request.query.get("guild")
@@ -928,6 +965,7 @@ async def start_game(interaction: discord.Interaction, map_type: str = "any"):
         "draft": draft,
         "picks": {},
         "difficulty": lobby.get("difficulty", "Prince"),
+        "map_type": map_type,
     }
 
     del data["lobbies"][host_id]
@@ -1196,10 +1234,17 @@ async def report_results(
     game_groups.pop(game_id, None)
     data["active_games"] = active_games
     data["game_groups"] = game_groups
+    # Save draft pools alongside match for history display
+    draft_pools = {}
+    if group.get("draft"):
+        draft_pools = group["draft"]
+
     data["matches"].append({
         "type": f"{len(members)}-player",
         "difficulty": difficulty,
+        "map_type": group.get("map_type", "any"),
         "victory_type": victory_type,
+        "draft_pools": draft_pools,
         "players": [
             {"id": info["id"], "finish": info["finish"], "civ": info["civ"],
              "elo_before": info["old_elo"], "elo_after": new_elos[i]}
