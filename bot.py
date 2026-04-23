@@ -548,24 +548,37 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
   .civ-option.picked {{ border-color: #22c55e; color: #22c55e; background: #0c2010; }}
   .finish-row {{ display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }}
   .finish-medal {{ font-size: 18px; width: 28px; text-align: center; flex-shrink: 0; }}
-  .civ-entry-header {{ display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }}
-  .civ-entry-icon {{ width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; }}
-  .civ-entry-title {{ font-family: 'Cinzel', serif; font-size: 18px; font-weight: 700; color: #e2e8f0; }}
-  .civ-entry-leader {{ font-size: 11px; color: #64748b; margin-top: 3px; letter-spacing: 1px; }}
-  .civ-section {{ margin-bottom: 14px; padding: 14px; background: #0d1017; border: 1px solid #1e2130; border-radius: 10px; }}
-  .civ-section-type {{ font-size: 9px; color: #475569; letter-spacing: 2px; margin-bottom: 4px; }}
-  .civ-section-name {{ font-size: 13px; font-weight: 700; color: #e2e8f0; margin-bottom: 6px; }}
-  .civ-section-desc {{ font-size: 11px; color: #94a3b8; line-height: 1.7; }}
+  /* Civilopedia tiles */
+  .civ-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; padding-bottom: 8px; }}
+  .civ-tile {{ background: #0d1017; border: 1px solid #1e2130; border-radius: 10px; padding: 12px; cursor: pointer; transition: all 0.15s; position: relative; overflow: hidden; }}
+  .civ-tile:hover {{ border-color: #2a3040; transform: translateY(-1px); }}
+  .civ-tile.expanded {{ border-color: #f97316; grid-column: 1 / -1; }}
+  .civ-tile-map {{ font-size: 16px; margin-bottom: 6px; }}
+  .civ-tile-name {{ font-family: 'Cinzel', serif; font-size: 11px; font-weight: 700; color: #e2e8f0; margin-bottom: 2px; line-height: 1.3; }}
+  .civ-tile-leader {{ font-size: 9px; color: #475569; margin-bottom: 6px; }}
+  .civ-tile-tags {{ display: flex; flex-wrap: wrap; gap: 3px; }}
+  .civ-tile-tag {{ font-size: 8px; padding: 1px 5px; border-radius: 4px; }}
+  .civ-tile-played {{ position: absolute; top: 8px; right: 8px; font-size: 8px; color: #f97316; font-weight: 700; }}
+  /* Expanded detail */
+  .civ-detail {{ display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid #1e2130; }}
+  .civ-tile.expanded .civ-detail {{ display: block; }}
+  .civ-detail-header {{ display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 12px; gap: 12px; }}
+  .civ-detail-title {{ font-family: 'Cinzel', serif; font-size: 16px; font-weight: 700; color: #e2e8f0; }}
+  .civ-detail-leader {{ font-size: 10px; color: #64748b; margin-top: 3px; }}
+  .civ-detail-stats {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }}
+  .civ-detail-stat {{ background: #080a0f; border: 1px solid #1e2130; border-radius: 8px; padding: 6px 10px; text-align: center; flex: 1; min-width: 60px; }}
+  .civ-detail-stat-val {{ font-size: 13px; font-weight: 700; color: #f97316; }}
+  .civ-detail-stat-label {{ font-size: 8px; color: #475569; margin-top: 1px; letter-spacing: 1px; }}
+  .civ-section {{ margin-bottom: 10px; padding: 12px; background: #080a0f; border: 1px solid #1e2130; border-radius: 8px; }}
+  .civ-section-type {{ font-size: 9px; letter-spacing: 2px; margin-bottom: 3px; }}
+  .civ-section-name {{ font-size: 12px; font-weight: 700; color: #e2e8f0; margin-bottom: 5px; }}
+  .civ-section-desc {{ font-size: 10px; color: #94a3b8; line-height: 1.7; }}
   .civ-section-desc span {{ color: #64748b; }}
+  .civ-bias {{ display: inline-block; padding: 2px 8px; border-radius: 12px; background: #1e2130; color: #475569; font-size: 9px; margin-top: 4px; }}
   .civ-suggest {{ padding: 10px 14px; cursor: pointer; font-size: 12px; border-bottom: 1px solid #1e2130; transition: background 0.1s; }}
   .civ-suggest:hover {{ background: #1e2130; }}
   .civ-suggest-name {{ color: #e2e8f0; font-weight: 600; }}
   .civ-suggest-leader {{ color: #475569; font-size: 10px; margin-top: 2px; }}
-  .civ-bias {{ display: inline-block; padding: 2px 8px; border-radius: 12px; background: #1e2130; color: #475569; font-size: 10px; margin-top: 6px; }}
-  .civ-stats-bar {{ display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }}
-  .civ-stat {{ background: #0d1017; border: 1px solid #1e2130; border-radius: 8px; padding: 8px 12px; text-align: center; flex: 1; min-width: 80px; }}
-  .civ-stat-val {{ font-size: 15px; font-weight: 700; color: #f97316; }}
-  .civ-stat-label {{ font-size: 9px; color: #475569; margin-top: 2px; letter-spacing: 1px; }}
 </style>
 </head>
 <body>
@@ -643,11 +656,13 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
   <div style="display:flex;flex-direction:column;height:100%;min-height:0;gap:10px">
     <div style="flex-shrink:0;position:relative">
       <input id="civSearch" class="form-input" placeholder="🔍  Search civilizations..." autocomplete="off"
-        style="margin-bottom:0;font-size:14px;padding:12px 16px;border-radius:10px"
-        oninput="onCivSearch(this.value)">
-      <div id="civSuggestions" style="position:absolute;top:100%;left:0;right:0;background:#0d1017;border:1px solid #1e2130;border-top:none;border-radius:0 0 10px 10px;z-index:50;display:none;max-height:220px;overflow-y:auto"></div>
+        style="margin-bottom:0;font-size:13px;padding:10px 16px;border-radius:10px"
+        oninput="onCivSearch(this.value)" onfocus="showAllSuggestions()">
+      <div id="civSuggestions" style="position:absolute;top:100%;left:0;right:0;background:#0d1017;border:1px solid #1e2130;border-top:none;border-radius:0 0 10px 10px;z-index:50;display:none;max-height:200px;overflow-y:auto"></div>
     </div>
-    <div id="civEntry" class="scroll-page" style="flex:1"></div>
+    <div class="scroll-page" style="flex:1">
+      <div class="civ-grid" id="civGrid"></div>
+    </div>
   </div>
 </div>
 
@@ -772,6 +787,7 @@ function switchTab(name) {{
   if (name === "live") buildLive();
   if (name === "history") buildHistory();
   if (name === "host") buildHostPage();
+  if (name === "civpedia") buildCivGrid("");
   // Auto-poll on live/host tabs
   clearInterval(_pollInterval);
   if (name === "live" || name === "host") {{
@@ -801,6 +817,7 @@ function switchTab(name) {{
         newLive.forEach(g => LIVE_GAMES.push(g));
         if (name === "live") buildLive();
         if (name === "host") buildHostPage();
+  if (name === "civpedia") buildCivGrid("");
       }} catch(e) {{}}
     }}, 8000);
   }}
@@ -1229,6 +1246,8 @@ const CIVPEDIA_ICONS = {{"Ability":"⚡","Building":"🏛️","Unit":"⚔️","I
 const TYPE_COLORS = {{"Ability":"#f97316","Building":"#3b82f6","Unit":"#ef4444","Improvement":"#22c55e","Wonder":"#eab308","Policy":"#a855f7","Unique":"#06b6d4","Bias":"#475569"}};
 
 // Server stats for this civ
+const COASTAL_CIVS = new Set(["Australia","Brunei","Carthage","Chile","Denmark","England","Indonesia","Japan","Kilwa","Korea","Netherlands","New Zealand","Norway","Oman","Philippines","Phoenicia","Polynesia","Portugal","Spain","Tonga","Tunisia","UAE","Venice"]);
+
 function getCivStats(civName) {{
   const wins = HISTORY.filter(g => g.players.some(p => p.civ === civName && p.finish === 1)).length;
   const played = HISTORY.filter(g => g.players.some(p => p.civ === civName)).length;
@@ -1236,37 +1255,28 @@ function getCivStats(civName) {{
   return {{wins, played, wr}};
 }}
 
-function onCivSearch(val) {{
-  const box = document.getElementById("civSuggestions");
-  if (!val.trim()) {{ box.style.display="none"; return; }}
-  const q = val.toLowerCase();
-  const matches = Object.keys(CIVPEDIA).filter(n => n.toLowerCase().includes(q)).slice(0, 10);
-  if (!matches.length) {{ box.style.display="none"; return; }}
-  box.innerHTML = matches.map(n => `
-    <div class="civ-suggest" onclick="showCiv('${{n}}')">
-      <div class="civ-suggest-name">${{n}}</div>
-      <div class="civ-suggest-leader">${{CIVPEDIA[n].leader}}</div>
-    </div>`).join("");
-  box.style.display = "block";
-}}
-
-function showCiv(name) {{
-  const box = document.getElementById("civSuggestions");
-  box.style.display = "none";
-  document.getElementById("civSearch").value = name;
-
+function buildCivDetail(name) {{
   const civ = CIVPEDIA[name];
-  if (!civ) return;
-  const el = document.getElementById("civEntry");
+  if (!civ) return "";
   const stats = getCivStats(name);
-  const isCoastal = ["Australia","Brunei","Carthage","Chile","Denmark","England","Indonesia","Japan","Kilwa","Korea","Netherlands","New Zealand","Norway","Oman","Philippines","Phoenicia","Polynesia","Portugal","Spain","Tonga","Tunisia","UAE","Venice"].includes(name);
+  const isCoastal = COASTAL_CIVS.has(name);
   const mapType = isCoastal ? "⛵ Coastal" : "🏕️ Land";
+  const bias = civ.entries.find(e => e.type === "Bias");
+  const biasHtml = bias && bias.name ? `<span class="civ-bias">🗺️ ${{bias.name}}</span>` : "";
 
-  // Build entry sections
+  const statsHtml = `<div class="civ-detail-stats">
+    <div class="civ-detail-stat"><div class="civ-detail-stat-val" style="color:#06b6d4;font-size:10px">${{mapType}}</div><div class="civ-detail-stat-label">MAP</div></div>
+    ${{stats.played > 0 ? `
+    <div class="civ-detail-stat"><div class="civ-detail-stat-val">${{stats.played}}</div><div class="civ-detail-stat-label">PLAYED</div></div>
+    <div class="civ-detail-stat"><div class="civ-detail-stat-val">${{stats.wins}}</div><div class="civ-detail-stat-label">WINS</div></div>
+    <div class="civ-detail-stat"><div class="civ-detail-stat-val" style="color:${{stats.wr>=50?"#22c55e":"#ef4444"}}">${{stats.wr}}%</div><div class="civ-detail-stat-label">WIN RATE</div></div>
+    ` : `<div class="civ-detail-stat" style="opacity:0.4"><div class="civ-detail-stat-val">—</div><div class="civ-detail-stat-label">UNPLAYED</div></div>`}}
+  </div>`;
+
   const sections = civ.entries.filter(e => e.type !== "Bias").map(e => {{
     const color = TYPE_COLORS[e.type] || "#94a3b8";
     const icon = CIVPEDIA_ICONS[e.type] || "•";
-    const desc = e.desc
+    const desc = (e.desc||"")
       .replace(/\(vs\. [\d\.]+\)/g, m => `<span>${{m}}</span>`)
       .replace(/\(from [\d\.]+[^)]*\)/g, m => `<span>${{m}}</span>`)
       .replace(/\(unchanged\)/g, m => `<span>${{m}}</span>`)
@@ -1274,32 +1284,116 @@ function showCiv(name) {{
     return `<div class="civ-section" style="border-left:3px solid ${{color}}">
       <div class="civ-section-type" style="color:${{color}}">${{icon}} ${{e.type.toUpperCase()}}</div>
       ${{e.name ? `<div class="civ-section-name">${{e.name}}</div>` : ""}}
-      ${{e.desc ? `<div class="civ-section-desc">${{desc}}</div>` : ""}}
+      ${{desc ? `<div class="civ-section-desc">${{desc}}</div>` : ""}}
     </div>`;
   }}).join("");
 
-  const bias = civ.entries.find(e => e.type === "Bias");
-  const biasHtml = bias && bias.name ? `<span class="civ-bias">🗺️ Bias: ${{bias.name}}</span>` : "";
-
-  const statsHtml = stats.played > 0 ? `
-    <div class="civ-stats-bar">
-      <div class="civ-stat"><div class="civ-stat-val">${{stats.played}}</div><div class="civ-stat-label">PLAYED</div></div>
-      <div class="civ-stat"><div class="civ-stat-val">${{stats.wins}}</div><div class="civ-stat-label">WINS</div></div>
-      <div class="civ-stat"><div class="civ-stat-val" style="color:${{stats.wr>=50?"#22c55e":"#ef4444"}}">${{stats.wr}}%</div><div class="civ-stat-label">WIN RATE</div></div>
-      <div class="civ-stat"><div class="civ-stat-val" style="color:#06b6d4;font-size:11px">${{mapType}}</div><div class="civ-stat-label">MAP TYPE</div></div>
-    </div>` : `<div class="civ-stats-bar"><div class="civ-stat" style="opacity:0.4"><div class="civ-stat-val">—</div><div class="civ-stat-label">NOT YET PLAYED</div></div><div class="civ-stat"><div class="civ-stat-val" style="color:#06b6d4;font-size:11px">${{mapType}}</div><div class="civ-stat-label">MAP TYPE</div></div></div>`;
-
-  el.innerHTML = `
-    <div class="civ-entry-header">
-      <div class="civ-entry-icon" style="background:#1e2130;border:1px solid #2a3040">${{isCoastal?"⛵":"🏕️"}}</div>
+  return `
+    <div class="civ-detail-header">
       <div>
-        <div class="civ-entry-title">${{name}}</div>
-        <div class="civ-entry-leader">Leader: ${{civ.leader}}</div>
+        <div class="civ-detail-title">${{name}}</div>
+        <div class="civ-detail-leader">Leader: ${{civ.leader}}</div>
         ${{biasHtml}}
       </div>
+      <span style="font-size:10px;color:#475569;cursor:pointer;padding:3px 8px;border:1px solid #1e2130;border-radius:6px;flex-shrink:0" onclick="collapseCiv(event)">✕</span>
     </div>
     ${{statsHtml}}
     ${{sections}}`;
+}}
+
+let expandedCiv = null;
+
+function buildCivGrid(filter) {{
+  const grid = document.getElementById("civGrid");
+  if (!grid) return;
+  grid.innerHTML = "";
+  const names = Object.keys(CIVPEDIA).filter(n =>
+    !filter || n.toLowerCase().includes(filter.toLowerCase())
+  ).sort();
+
+  names.forEach(name => {{
+    const civ = CIVPEDIA[name];
+    const isCoastal = COASTAL_CIVS.has(name);
+    const stats = getCivStats(name);
+    const ability = civ.entries.find(e => e.type === "Ability");
+    const units = civ.entries.filter(e => e.type === "Unit" || e.type === "Great Person");
+    const buildings = civ.entries.filter(e => e.type === "Building");
+    const improvements = civ.entries.filter(e => e.type === "Improvement");
+
+    const tags = [
+      ...units.map(u => `<span class="civ-tile-tag" style="background:#200c0c;color:#ef4444">⚔️ ${{u.name}}</span>`),
+      ...buildings.map(b => `<span class="civ-tile-tag" style="background:#0c1a20;color:#3b82f6">🏛️ ${{b.name}}</span>`),
+      ...improvements.map(i => `<span class="civ-tile-tag" style="background:#0c2010;color:#22c55e">🔧 ${{i.name}}</span>`),
+    ].join("");
+
+    const playedBadge = stats.played > 0 ? `<div class="civ-tile-played">${{stats.wins}}W/${{stats.played}}G</div>` : "";
+
+    const tile = document.createElement("div");
+    tile.className = "civ-tile";
+    tile.id = "civ-tile-" + name.replace(/\s+/g,'_');
+    tile.innerHTML = `
+      ${{playedBadge}}
+      <div class="civ-tile-map">${{isCoastal?"⛵":"🏕️"}}</div>
+      <div class="civ-tile-name">${{name}}</div>
+      <div class="civ-tile-leader">${{civ.leader}}</div>
+      ${{ability ? `<div style="font-size:9px;color:#64748b;margin-bottom:6px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden">${{ability.name}}</div>` : ""}}
+      <div class="civ-tile-tags">${{tags}}</div>
+      <div class="civ-detail">${{buildCivDetail(name)}}</div>`;
+
+    tile.querySelector(".civ-tile-map").onclick =
+    tile.querySelector(".civ-tile-name").onclick =
+    tile.querySelector(".civ-tile-leader").onclick = (ev) => {{
+      ev.stopPropagation();
+      toggleCiv(name);
+    }};
+    if (tile.querySelector(".civ-tile-tags")) {{
+      tile.querySelector(".civ-tile-tags").onclick = (ev) => {{
+        ev.stopPropagation();
+        toggleCiv(name);
+      }};
+    }}
+    const abilityEl = tile.querySelector("[style*='line-clamp']");
+    if (abilityEl) abilityEl.onclick = (ev) => {{ ev.stopPropagation(); toggleCiv(name); }};
+
+    grid.appendChild(tile);
+    // Re-expand if this was the expanded one
+    if (expandedCiv === name) tile.classList.add("expanded");
+  }});
+}}
+
+function toggleCiv(name) {{
+  if (expandedCiv === name) {{
+    expandedCiv = null;
+  }} else {{
+    expandedCiv = name;
+  }}
+  // Re-render to move expanded tile to correct position
+  const searchVal = document.getElementById("civSearch")?.value || "";
+  buildCivGrid(searchVal);
+  // Scroll expanded tile into view
+  if (expandedCiv) {{
+    setTimeout(() => {{
+      const el = document.getElementById("civ-tile-" + expandedCiv.replace(/\s+/g,'_'));
+      if (el) el.scrollIntoView({{behavior:"smooth", block:"nearest"}});
+    }}, 50);
+  }}
+}}
+
+function collapseCiv(event) {{
+  event.stopPropagation();
+  expandedCiv = null;
+  const searchVal = document.getElementById("civSearch")?.value || "";
+  buildCivGrid(searchVal);
+}}
+
+function onCivSearch(val) {{
+  const box = document.getElementById("civSuggestions");
+  box.style.display = "none";
+  buildCivGrid(val);
+}}
+
+function showAllSuggestions() {{
+  // Don't show dropdown on focus — grid is already visible
 }}
 
 // Close suggestions when clicking outside
