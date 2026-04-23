@@ -748,33 +748,16 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
 <div id="civTooltip" class="civ-tooltip"></div>
 <div id="modalContainer"></div>
 <div id="easterEgg" style="display:none;position:fixed;inset:0;background:#080a0f;z-index:500;overflow-y:auto;padding:40px">
-  <div style="max-width:600px;margin:0 auto">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:32px">
+  <div style="max-width:900px;margin:0 auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
       <div>
-        <h1 style="font-family:Cinzel,serif;font-size:28px;color:#f97316;letter-spacing:4px;margin-bottom:6px">✦ SECRET LAB ✦</h1>
-        <p style="font-size:11px;color:#334155;letter-spacing:2px">YOU FOUND THE EASTER EGG</p>
+        <h1 style="font-family:Cinzel,serif;font-size:24px;color:#f97316;letter-spacing:4px;margin-bottom:4px">✦ SECRET LAB ✦</h1>
+        <p style="font-size:10px;color:#334155;letter-spacing:2px">YOU FOUND THE EASTER EGG · CARD TIER DEMO</p>
       </div>
       <button onclick="closeEgg()" style="background:transparent;border:1px solid #1e2130;color:#475569;border-radius:8px;padding:6px 14px;font-family:inherit;font-size:11px;cursor:pointer">✕ Close</button>
     </div>
-
-    <!-- Konami-style message -->
-    <div style="background:#0d1017;border:1px solid #1e2130;border-radius:12px;padding:20px;margin-bottom:20px;text-align:center">
-      <div style="font-size:32px;margin-bottom:10px">🏆</div>
-      <div style="font-family:Cinzel,serif;font-size:14px;color:#e2e8f0;margin-bottom:6px">You triple-clicked your name.</div>
-      <div style="font-size:11px;color:#475569">Most people never find this.</div>
-    </div>
-
-    <!-- Card tier preview -->
-    <div style="font-family:IBM Plex Mono,monospace;font-size:10px;color:#64748b;letter-spacing:2px;margin-bottom:12px">CARD TIER SHOWCASE</div>
-    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:28px" id="eggCards"></div>
-
-    <!-- Secret stats -->
-    <div style="font-family:IBM Plex Mono,monospace;font-size:10px;color:#64748b;letter-spacing:2px;margin-bottom:12px">SERVER SECRETS</div>
-    <div style="background:#0d1017;border:1px solid #1e2130;border-radius:12px;padding:16px;margin-bottom:20px" id="eggStats"></div>
-
-    <!-- Silly facts -->
-    <div style="font-family:IBM Plex Mono,monospace;font-size:10px;color:#64748b;letter-spacing:2px;margin-bottom:12px">DID YOU KNOW</div>
-    <div id="eggFacts" style="display:flex;flex-direction:column;gap:8px"></div>
+    <p style="font-size:10px;color:#475569;margin-bottom:24px">All five card tiers shown as Rome. Click any card to expand.</p>
+    <div id="eggCards" style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px"></div>
   </div>
 </div>
 
@@ -2206,64 +2189,108 @@ function handleNameClick() {{
   }}
 }}
 
+let _eggExpanded = null;
+
 function openEasterEgg() {{
   document.getElementById("easterEgg").style.display = "block";
+  _eggExpanded = null;
+  buildEggCards();
+}}
 
-  // Card tier showcase
+function buildEggCards() {{
   const tiers = ["normal","bronze","silver","gold","diamond"];
-  const tierBgs = {{
-    normal:  "background:#0d1017;border-color:#1e2130",
-    bronze:  "background:linear-gradient(160deg,#1a0e05,#0d0805,#1a1005);border-color:#c8762e",
-    silver:  "background:linear-gradient(160deg,#111418,#0a0d10,#111318);border-color:#8fa3b8",
-    gold:    "background:linear-gradient(160deg,#1a1500,#0d0e00,#1a1200);border-color:#d4a500",
-    diamond: "background:linear-gradient(160deg,#020d1a,#010810,#020a18);border-color:#22d3ee",
-  }};
-  const eggCards = document.getElementById("eggCards");
-  eggCards.innerHTML = tiers.map(t => {{
-    const info = TIER_LABELS[t];
-    return `<div style="border:1px solid;border-radius:10px;padding:12px 10px;text-align:center;${{tierBgs[t]}};aspect-ratio:5/7;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px">
-      <div style="font-size:22px">${{info.icon||"🃏"}}</div>
-      <div style="font-family:Cinzel,serif;font-size:10px;color:${{info.color}};font-weight:700">${{info.label}}</div>
-      ${{t!=="normal"?`<div style="font-size:8px;color:#475569">${{Object.values({{bronze:1,silver:2,gold:3,diamond:4}})[tiers.indexOf(t)-1]}} pts</div>`:"<div style='font-size:8px;color:#334155'>free</div>"}}
+  const grid = document.getElementById("eggCards");
+  grid.innerHTML = "";
+
+  tiers.forEach(tier => {{
+    const info = TIER_LABELS[tier];
+    const tierClass = tier !== "normal" ? "tier-"+tier : "";
+
+    // Build a real card just like buildCivGrid but forced as Rome + this tier
+    const civ = CIVPEDIA["Rome"];
+    if (!civ) return;
+    const allEntries = civ.entries.filter(e => e.type !== "Bias");
+    const entryRows = allEntries.map(e => {{
+      const color = TYPE_COLORS[e.type] || "#475569";
+      const icon  = CIVPEDIA_ICONS[e.type] || "•";
+      return `<div style="padding-left:7px;border-left:2px solid ${{color}}55;margin-bottom:4px">
+        <div style="font-size:8px;color:${{color}};letter-spacing:1px;margin-bottom:1px">${{icon}} ${{e.type.toUpperCase()}}</div>
+        <div style="font-size:9px;font-weight:700;color:#e2e8f0;margin-bottom:2px;line-height:1.2">${{e.name}}</div>
+        ${{e.desc ? `<div style="font-size:8px;color:#64748b;line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${{e.desc}}</div>` : ""}}
+      </div>`;
+    }}).join("");
+
+    // Build expand detail
+    const sections = allEntries.map(e => {{
+      const color = TYPE_COLORS[e.type] || "#94a3b8";
+      const icon  = CIVPEDIA_ICONS[e.type] || "•";
+      const desc = (e.desc||"")
+        .replace(/\(vs\. [\d\.]+\)/g, m => `<span style="color:#64748b">${{m}}</span>`)
+        .replace(/\(from [\d\.]+[^)]*\)/g, m => `<span style="color:#64748b">${{m}}</span>`);
+      return `<div class="civ-section" style="border-left:3px solid ${{color}}">
+        <div class="civ-section-type" style="color:${{color}}">${{icon}} ${{e.type.toUpperCase()}}</div>
+        ${{e.name ? `<div class="civ-section-name">${{e.name}}</div>` : ""}}
+        ${{desc ? `<div class="civ-section-desc">${{desc}}</div>` : ""}}
+      </div>`;
+    }}).join("");
+
+    const upgradeHtml = `<div style="margin-top:14px;padding:12px;background:#080a0f;border:1px solid #1e2130;border-radius:8px;text-align:center">
+      <div style="font-size:11px;color:${{info.color}};font-weight:700;margin-bottom:4px">${{info.icon}} ${{info.label}} Tier</div>
+      <div style="font-size:9px;color:#475569">Demo card — full upgrade system in civilopedia</div>
     </div>`;
-  }}).join("");
 
-  // Secret stats
-  const totalGames = HISTORY.length;
-  const totalPlayers = PLAYERS.length;
-  const mostPlayedCiv = (() => {{
-    const counts = {{}};
-    HISTORY.forEach(g => g.players.forEach(p => {{ if(p.civ) counts[p.civ] = (counts[p.civ]||0)+1; }}));
-    return Object.entries(counts).sort((a,b)=>b[1]-a[1])[0];
-  }})();
-  const biggestEloSwing = (() => {{
-    let max = 0, who = "", what = "";
-    HISTORY.forEach(g => g.players.forEach(p => {{
-      const d = Math.abs((p.elo_after||0) - (p.elo_before||0));
-      if (d > max) {{ max = d; who = p.name; what = d > 0 ? "+"+d : ""+d; }}
-    }}));
-    return {{max, who}};
-  }})();
-  const mostWins = PLAYERS.reduce((a,b) => (LB_DATA[b.id]?.wins||0) > (LB_DATA[a.id]?.wins||0) ? b : a, PLAYERS[0]);
-  document.getElementById("eggStats").innerHTML = [
-    `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1e2130;font-size:11px"><span style="color:#475569">Total games played</span><span style="color:#e2e8f0;font-weight:700">${{totalGames}}</span></div>`,
-    `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1e2130;font-size:11px"><span style="color:#475569">Registered players</span><span style="color:#e2e8f0;font-weight:700">${{totalPlayers}}</span></div>`,
-    mostPlayedCiv ? `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1e2130;font-size:11px"><span style="color:#475569">Most played civ</span><span style="color:#e2e8f0;font-weight:700">${{mostPlayedCiv[0]}} (${{mostPlayedCiv[1]}}x)</span></div>` : "",
-    biggestEloSwing.who ? `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1e2130;font-size:11px"><span style="color:#475569">Biggest Elo swing</span><span style="color:#f97316;font-weight:700">${{biggestEloSwing.who}} ±${{biggestEloSwing.max}}</span></div>` : "",
-    mostWins ? `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:11px"><span style="color:#475569">Most wins</span><span style="color:#22c55e;font-weight:700">${{mostWins.name}} (${{LB_DATA[mostWins.id]?.wins||0}})</span></div>` : "",
-  ].join("");
+    const tile = document.createElement("div");
+    tile.className = "civ-tile" + (tierClass ? " "+tierClass : "");
+    tile.dataset.tier = tier;
+    tile.dataset.eggtier = tier;
+    tile.innerHTML = `
+      <div class="civ-tile-shine"></div>
+      ${{tier !== "normal" ? `<div class="tier-badge">${{info.icon}}</div>` : ""}}
+      <div class="civ-card-content" style="display:flex;flex-direction:column;flex:1;min-height:0">
+        <div class="civ-tile-top">
+          <div class="civ-tile-map">🏕️</div>
+          <span style="font-size:8px;color:${{info.color}};font-weight:700;background:#080a0f;border:1px solid ${{info.color}}44;border-radius:5px;padding:1px 5px">${{info.label.toUpperCase()}}</span>
+        </div>
+        <div class="civ-tile-name" style="color:#e2e8f0">Rome</div>
+        <div class="civ-tile-leader">Augustus Caesar</div>
+        <div class="civ-tile-divider"></div>
+        <div style="flex:1;display:flex;flex-direction:column;gap:4px">${{entryRows}}</div>
+      </div>
+      <div class="civ-detail">
+        <div class="civ-detail-header">
+          <div>
+            <div class="civ-detail-title">Rome</div>
+            <div class="civ-detail-leader">Leader: Augustus Caesar</div>
+          </div>
+          <span style="font-size:10px;color:#475569;cursor:pointer;padding:3px 8px;border:1px solid #1e2130;border-radius:6px;flex-shrink:0" onclick="closeEggCard(event)">✕</span>
+        </div>
+        ${{sections}}
+        ${{upgradeHtml}}
+      </div>`;
 
-  // Fun facts
-  const facts = [
-    "The Deity rank requires 1600 Elo — only achievable through consistent excellence.",
-    "Diamond card upgrades cost 10 wins total. Choose wisely.",
-    "Triple-clicking your name was the hardest button to find on this site.",
-    `There have been ${{HISTORY.reduce((a,g)=>a+g.players.length,0)}} total player-game appearances across all matches.`,
-    "This easter egg has no gameplay benefit whatsoever.",
-  ];
-  document.getElementById("eggFacts").innerHTML = facts.map(f =>
-    `<div style="background:#0d1017;border:1px solid #1e2130;border-radius:8px;padding:12px 14px;font-size:10px;color:#475569;line-height:1.6">💡 ${{f}}</div>`
-  ).join("");
+    tile.onclick = (ev) => {{
+      if (ev.target.closest(".civ-detail")) return;
+      const t = tile.dataset.eggtier;
+      if (_eggExpanded === t) {{
+        _eggExpanded = null;
+        tile.classList.remove("expanded");
+      }} else {{
+        _eggExpanded = t;
+        grid.querySelectorAll(".civ-tile").forEach(c => c.classList.remove("expanded"));
+        tile.classList.add("expanded");
+        setTimeout(() => tile.scrollIntoView({{behavior:"smooth",block:"nearest"}}), 50);
+      }}
+    }};
+
+    addTilt(tile);
+    grid.appendChild(tile);
+  }});
+}}
+
+function closeEggCard(event) {{
+  event.stopPropagation();
+  _eggExpanded = null;
+  document.querySelectorAll("#eggCards .civ-tile").forEach(c => c.classList.remove("expanded"));
 }}
 
 function closeEgg() {{
