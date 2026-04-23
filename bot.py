@@ -405,7 +405,7 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
     logged_in_name_json = _json.dumps(logged_in_name or "")
     all_civs_json = _json.dumps(ALL_CIVS)
     # Load display name and fav civ from player prefs
-    prefs = players.get(logged_in_id or "", {{}}).get("prefs", {{}}) if logged_in_id else {{}}
+    prefs = players.get(logged_in_id or "", {}).get("prefs", {}) if logged_in_id else {}
     display_name_json = _json.dumps(prefs.get("display_name", logged_in_name or ""))
     fav_civ_json = _json.dumps(prefs.get("fav_civ", ""))
     guild_id_json = _json.dumps(guild_id)
