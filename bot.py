@@ -414,6 +414,9 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
     guild_id_json = _json.dumps(guild_id)
     # Build per-player prefs for display
     player_prefs_json = _json.dumps({pid: p.get("prefs", {}) for pid, p in players.items()})
+    my_prefs = players.get(logged_in_id or "", {}).get("prefs", {}) if logged_in_id else {}
+    upgrade_points_json = _json.dumps(my_prefs.get("upgrade_points", 0))
+    card_tiers_json = _json.dumps(my_prefs.get("card_tiers", {}))
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -425,6 +428,12 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700&family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
 <style>
   *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  /* Global custom scrollbars — thin, non-overlaying */
+  * {{ scrollbar-width: thin; scrollbar-color: #2a3040 transparent; }}
+  *::-webkit-scrollbar {{ width: 4px; height: 4px; }}
+  *::-webkit-scrollbar-track {{ background: transparent; }}
+  *::-webkit-scrollbar-thumb {{ background: #2a3040; border-radius: 4px; }}
+  *::-webkit-scrollbar-thumb:hover {{ background: #f97316; }}
   html, body {{ height: 100%; overflow: hidden; }}
   body {{ background: #080a0f; color: #e2e8f0; font-family: 'IBM Plex Mono', monospace; height: 100vh; display: flex; flex-direction: column; padding: 16px; gap: 10px; }}
   .topbar {{ display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; height: 40px; }}
@@ -454,7 +463,7 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
   .lb-row:hover {{ background: #0f1420; border-radius: 4px; padding-left: 4px; padding-right: 4px; }}
   .empty {{ text-align: center; color: #334155; padding: 40px; font-size: 12px; }}
   /* Live & History pages */
-  .scroll-page {{ flex: 1; overflow-y: auto; min-height: 0; padding-right: 4px; }}
+  .scroll-page {{ flex: 1; overflow-y: auto; min-height: 0; padding-right: 2px; }}
   .game-card {{ background: #0d1017; border: 1px solid #1e2130; border-radius: 10px; padding: 14px; margin-bottom: 10px; }}
   .game-header {{ display: flex; align-items: center; justify-content: space-between; cursor: pointer; }}
   .game-title {{ font-size: 13px; font-weight: 600; color: #e2e8f0; }}
@@ -561,20 +570,39 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
   .civ-grid {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; padding-bottom: 12px; }}
   /* 3D tilt card — playing card ratio 5:7 */
   .civ-tile {{
-    background: #0d1017; border: 1px solid #1e2130; border-radius: 12px; padding: 16px 14px;
+    background: #0d1017; border: 1px solid #1e2130; border-radius: 12px; padding: 14px 12px;
     cursor: pointer; position: relative; overflow: hidden;
-    aspect-ratio: 5 / 7; display: flex; flex-direction: column;
+    aspect-ratio: 5 / 7; display: flex; flex-direction: column; justify-content: flex-start;
     transform-style: preserve-3d; transform: perspective(600px) rotateX(0deg) rotateY(0deg);
     transition: transform 0.08s ease, border-color 0.2s, box-shadow 0.2s;
     will-change: transform;
   }}
   .civ-tile:hover {{ border-color: #2a3040; box-shadow: 0 16px 48px rgba(0,0,0,0.5); }}
+  /* Tier backgrounds */
+  .tier-bronze {{ background: linear-gradient(160deg, #1a0e05 0%, #0d0805 40%, #1a1005 100%); border-color: #7c4a1e; }}
+  .tier-bronze:hover {{ border-color: #c8762e; box-shadow: 0 16px 48px rgba(160,80,20,0.35); }}
+  .tier-silver {{ background: linear-gradient(160deg, #111418 0%, #0a0d10 40%, #111318 100%); border-color: #4a5568; }}
+  .tier-silver:hover {{ border-color: #8fa3b8; box-shadow: 0 16px 48px rgba(100,140,180,0.25); }}
+  .tier-gold {{ background: linear-gradient(160deg, #1a1500 0%, #0d0e00 40%, #1a1200 100%); border-color: #8a6a00; }}
+  .tier-gold:hover {{ border-color: #d4a500; box-shadow: 0 16px 48px rgba(200,160,0,0.35); }}
+  .tier-diamond {{ background: linear-gradient(160deg, #020d1a 0%, #010810 40%, #020a18 100%); border-color: #0a4a6e; }}
+  .tier-diamond:hover {{ border-color: #22d3ee; box-shadow: 0 16px 48px rgba(0,200,255,0.3); }}
+  /* Tier badge on card */
+  .tier-badge {{ position: absolute; bottom: 8px; right: 8px; font-size: 13px; pointer-events: none; }}
+  /* Upgrade button */
+  .upgrade-btn {{ display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 8px; border: 1px solid; cursor: pointer; font-family: IBM Plex Mono, monospace; font-size: 11px; font-weight: 700; transition: opacity 0.15s; background: transparent; }}
+  .upgrade-btn:hover {{ opacity: 0.8; }}
+  .upgrade-btn:disabled {{ opacity: 0.35; cursor: not-allowed; }}
   .civ-tile.expanded {{
     border-color: #f97316; grid-column: 1 / -1;
-    aspect-ratio: unset;
+    aspect-ratio: unset; justify-content: flex-start;
     transform: perspective(600px) rotateX(0deg) rotateY(0deg) !important;
     box-shadow: 0 0 0 1px #f97316;
   }}
+  /* Hide card-only elements when expanded */
+  .civ-tile.expanded .civ-card-content {{ display: none; }}
+  /* Hide detail when collapsed */
+  .civ-tile:not(.expanded) .civ-detail {{ display: none; }}
   /* Anime-style shine — single diagonal sweep band */
   .civ-tile-shine {{
     position: absolute; inset: 0; border-radius: 12px; pointer-events: none; opacity: 0;
@@ -719,6 +747,36 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
 </div>
 <div id="civTooltip" class="civ-tooltip"></div>
 <div id="modalContainer"></div>
+<div id="easterEgg" style="display:none;position:fixed;inset:0;background:#080a0f;z-index:500;overflow-y:auto;padding:40px">
+  <div style="max-width:600px;margin:0 auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:32px">
+      <div>
+        <h1 style="font-family:Cinzel,serif;font-size:28px;color:#f97316;letter-spacing:4px;margin-bottom:6px">✦ SECRET LAB ✦</h1>
+        <p style="font-size:11px;color:#334155;letter-spacing:2px">YOU FOUND THE EASTER EGG</p>
+      </div>
+      <button onclick="closeEgg()" style="background:transparent;border:1px solid #1e2130;color:#475569;border-radius:8px;padding:6px 14px;font-family:inherit;font-size:11px;cursor:pointer">✕ Close</button>
+    </div>
+
+    <!-- Konami-style message -->
+    <div style="background:#0d1017;border:1px solid #1e2130;border-radius:12px;padding:20px;margin-bottom:20px;text-align:center">
+      <div style="font-size:32px;margin-bottom:10px">🏆</div>
+      <div style="font-family:Cinzel,serif;font-size:14px;color:#e2e8f0;margin-bottom:6px">You triple-clicked your name.</div>
+      <div style="font-size:11px;color:#475569">Most people never find this.</div>
+    </div>
+
+    <!-- Card tier preview -->
+    <div style="font-family:IBM Plex Mono,monospace;font-size:10px;color:#64748b;letter-spacing:2px;margin-bottom:12px">CARD TIER SHOWCASE</div>
+    <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:28px" id="eggCards"></div>
+
+    <!-- Secret stats -->
+    <div style="font-family:IBM Plex Mono,monospace;font-size:10px;color:#64748b;letter-spacing:2px;margin-bottom:12px">SERVER SECRETS</div>
+    <div style="background:#0d1017;border:1px solid #1e2130;border-radius:12px;padding:16px;margin-bottom:20px" id="eggStats"></div>
+
+    <!-- Silly facts -->
+    <div style="font-family:IBM Plex Mono,monospace;font-size:10px;color:#64748b;letter-spacing:2px;margin-bottom:12px">DID YOU KNOW</div>
+    <div id="eggFacts" style="display:flex;flex-direction:column;gap:8px"></div>
+  </div>
+</div>
 
 <script>
 const TIMELINE = {timeline_json};
@@ -736,6 +794,8 @@ const DISPLAY_NAME = {display_name_json};
 const FAV_CIV = {fav_civ_json};
 const GUILD_ID = {guild_id_json};
 const PLAYER_PREFS = {player_prefs_json};
+const UPGRADE_POINTS = {upgrade_points_json};
+const CARD_TIERS = {card_tiers_json};
 const PALETTE = ["#f97316","#3b82f6","#a855f7","#22c55e","#ef4444","#eab308","#06b6d4","#ec4899","#f43f5e","#10b981","#8b5cf6","#0ea5e9"];
 
 const TITLES = [
@@ -1296,6 +1356,86 @@ const TYPE_COLORS = {{"Ability":"#f97316","Building":"#3b82f6","Unit":"#ef4444",
 // Server stats for this civ
 const COASTAL_CIVS = new Set(["Australia","Brunei","Carthage","Chile","Denmark","England","Indonesia","Japan","Kilwa","Korea","Netherlands","New Zealand","Norway","Oman","Philippines","Phoenicia","Polynesia","Portugal","Spain","Tonga","Tunisia","UAE","Venice"]);
 
+const TIER_ORDER = ["normal","bronze","silver","gold","diamond"];
+const TIER_COSTS = {{normal:0, bronze:1, silver:2, gold:3, diamond:4}};
+const TIER_LABELS = {{
+  normal:  {{icon:"",   label:"Normal",  color:"#475569", border:"#1e2130"}},
+  bronze:  {{icon:"🥉", label:"Bronze",  color:"#c8762e", border:"#7c4a1e"}},
+  silver:  {{icon:"🥈", label:"Silver",  color:"#8fa3b8", border:"#4a5568"}},
+  gold:    {{icon:"🥇", label:"Gold",    color:"#d4a500", border:"#8a6a00"}},
+  diamond: {{icon:"💎", label:"Diamond", color:"#22d3ee", border:"#0a4a6e"}},
+}};
+
+function getCivTier(civName) {{
+  return CARD_TIERS[civName] || "normal";
+}}
+
+function getNextTier(civName) {{
+  const cur = getCivTier(civName);
+  const idx = TIER_ORDER.indexOf(cur);
+  return idx < TIER_ORDER.length - 1 ? TIER_ORDER[idx + 1] : null;
+}}
+
+function getUpgradeCost(civName) {{
+  const next = getNextTier(civName);
+  return next ? TIER_COSTS[next] : null;
+}}
+
+async function upgradeCiv(civName) {{
+  const next = getNextTier(civName);
+  const cost = getUpgradeCost(civName);
+  if (!next || UPGRADE_POINTS < cost) return;
+  const res = await fetch("/api/upgrade_card", {{
+    method: "POST",
+    headers: {{"Content-Type": "application/json"}},
+    body: JSON.stringify({{guild: guild, civ: civName}})
+  }});
+  if (res.ok) {{ refreshPage(); }}
+  else {{ const t = await res.text(); alert("Could not upgrade: " + t); }}
+}}
+
+// Tier-specific metallic shine override
+function getTierShine(tier, dx, dy) {{
+  const angle = (115 + dy * 5).toFixed(1);
+  const shift1 = (42 + dx * 28).toFixed(1);
+  const shift2 = (66 + dx * 22).toFixed(1);
+  if (tier === "normal") {{
+    return [
+      `linear-gradient(${{angle}}deg, transparent ${{(+shift1-22).toFixed(1)}}%, rgba(255,255,255,0.01) ${{(+shift1-4).toFixed(1)}}%, rgba(255,255,255,0.06) ${{shift1}}%, rgba(255,255,255,0.01) ${{(+shift1+4).toFixed(1)}}%, transparent ${{(+shift1+22).toFixed(1)}}%)`,
+      `linear-gradient(${{angle}}deg, transparent ${{(+shift2-15).toFixed(1)}}%, rgba(255,255,255,0.01) ${{(+shift2-3).toFixed(1)}}%, rgba(255,255,255,0.03) ${{shift2}}%, rgba(255,255,255,0.01) ${{(+shift2+3).toFixed(1)}}%, transparent ${{(+shift2+15).toFixed(1)}}%)`,
+    ].join(",");
+  }}
+  if (tier === "bronze") {{
+    return [
+      `linear-gradient(${{angle}}deg, transparent ${{(+shift1-20).toFixed(1)}}%, rgba(200,118,46,0.06) ${{(+shift1-4).toFixed(1)}}%, rgba(200,118,46,0.22) ${{shift1}}%, rgba(200,118,46,0.06) ${{(+shift1+4).toFixed(1)}}%, transparent ${{(+shift1+20).toFixed(1)}}%)`,
+      `linear-gradient(${{angle}}deg, transparent ${{(+shift2-12).toFixed(1)}}%, rgba(255,180,80,0.04) ${{(+shift2-3).toFixed(1)}}%, rgba(255,180,80,0.12) ${{shift2}}%, rgba(255,180,80,0.04) ${{(+shift2+3).toFixed(1)}}%, transparent ${{(+shift2+12).toFixed(1)}}%)`,
+    ].join(",");
+  }}
+  if (tier === "silver") {{
+    return [
+      `linear-gradient(${{angle}}deg, transparent ${{(+shift1-20).toFixed(1)}}%, rgba(180,200,220,0.05) ${{(+shift1-4).toFixed(1)}}%, rgba(200,220,240,0.22) ${{shift1}}%, rgba(180,200,220,0.05) ${{(+shift1+4).toFixed(1)}}%, transparent ${{(+shift1+20).toFixed(1)}}%)`,
+      `linear-gradient(${{angle}}deg, transparent ${{(+shift2-12).toFixed(1)}}%, rgba(220,235,250,0.04) ${{(+shift2-3).toFixed(1)}}%, rgba(220,235,250,0.14) ${{shift2}}%, rgba(220,235,250,0.04) ${{(+shift2+3).toFixed(1)}}%, transparent ${{(+shift2+12).toFixed(1)}}%)`,
+    ].join(",");
+  }}
+  if (tier === "gold") {{
+    const shift3 = (30 + dx * 30).toFixed(1);
+    return [
+      `linear-gradient(${{angle}}deg, transparent ${{(+shift1-18).toFixed(1)}}%, rgba(212,165,0,0.08) ${{(+shift1-4).toFixed(1)}}%, rgba(255,210,0,0.30) ${{shift1}}%, rgba(212,165,0,0.08) ${{(+shift1+4).toFixed(1)}}%, transparent ${{(+shift1+18).toFixed(1)}}%)`,
+      `linear-gradient(${{angle}}deg, transparent ${{(+shift2-12).toFixed(1)}}%, rgba(255,200,0,0.05) ${{(+shift2-3).toFixed(1)}}%, rgba(255,200,0,0.18) ${{shift2}}%, rgba(255,200,0,0.05) ${{(+shift2+3).toFixed(1)}}%, transparent ${{(+shift2+12).toFixed(1)}}%)`,
+      `linear-gradient(${{(+angle+60).toFixed(1)}}deg, transparent ${{(+shift3-15).toFixed(1)}}%, rgba(255,240,100,0.06) ${{shift3}}%, transparent ${{(+shift3+15).toFixed(1)}}%)`,
+    ].join(",");
+  }}
+  if (tier === "diamond") {{
+    const hue1 = ((dx + 1) * 90).toFixed(0); // 0-180
+    const hue2 = ((dy + 1) * 60 + 180).toFixed(0); // 180-300
+    return [
+      `linear-gradient(${{angle}}deg, transparent ${{(+shift1-18).toFixed(1)}}%, hsla(${{hue1}},90%,75%,0.05) ${{(+shift1-4).toFixed(1)}}%, hsla(${{hue1}},90%,80%,0.28) ${{shift1}}%, hsla(${{hue1}},90%,75%,0.05) ${{(+shift1+4).toFixed(1)}}%, transparent ${{(+shift1+18).toFixed(1)}}%)`,
+      `linear-gradient(${{(+angle+40).toFixed(1)}}deg, transparent ${{(+shift2-12).toFixed(1)}}%, hsla(${{hue2}},85%,70%,0.04) ${{(+shift2-3).toFixed(1)}}%, hsla(${{hue2}},85%,75%,0.18) ${{shift2}}%, hsla(${{hue2}},85%,70%,0.04) ${{(+shift2+3).toFixed(1)}}%, transparent ${{(+shift2+12).toFixed(1)}}%)`,
+    ].join(",");
+  }}
+  return "";
+}}
+
 function getCivStats(civName) {{
   const wins = HISTORY.filter(g => g.players.some(p => p.civ === civName && p.finish === 1)).length;
   const played = HISTORY.filter(g => g.players.some(p => p.civ === civName)).length;
@@ -1336,6 +1476,36 @@ function buildCivDetail(name) {{
     </div>`;
   }}).join("");
 
+  // Upgrade section
+  let upgradeHtml = "";
+  if (LOGGED_IN_ID) {{
+    const tier = getCivTier(name);
+    const tierInfo = TIER_LABELS[tier];
+    const next = getNextTier(name);
+    const cost = getUpgradeCost(name);
+    const nextInfo = next ? TIER_LABELS[next] : null;
+    const canAfford = next && UPGRADE_POINTS >= cost;
+    upgradeHtml = `<div style="margin-top:14px;padding:12px;background:#080a0f;border:1px solid #1e2130;border-radius:8px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div>
+          <div style="font-size:9px;color:#475569;letter-spacing:2px;margin-bottom:3px">CARD TIER</div>
+          <div style="font-size:13px;font-weight:700;color:${{tierInfo.color}}">${{tierInfo.icon}} ${{tierInfo.label}}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:9px;color:#475569;letter-spacing:2px;margin-bottom:3px">UPGRADE POINTS</div>
+          <div style="font-size:16px;font-weight:700;color:#f97316">${{UPGRADE_POINTS}} pts</div>
+        </div>
+      </div>
+      ${{next ? `
+        <button class="upgrade-btn" style="color:${{nextInfo.color}};border-color:${{nextInfo.border}};width:100%;justify-content:center;${{!canAfford?'opacity:0.35;cursor:not-allowed':''}}"
+          ${{canAfford ? `onclick="upgradeCiv('${{name}}')"` : 'disabled'}}>
+          Upgrade to ${{nextInfo.icon}} ${{nextInfo.label}} &nbsp;·&nbsp; ${{cost}} pt${{cost>1?'s':''}}
+        </button>
+        ${{!canAfford ? `<div style="font-size:9px;color:#334155;text-align:center;margin-top:6px">Need ${{cost - UPGRADE_POINTS}} more point${{cost-UPGRADE_POINTS>1?'s':''}}</div>` : ""}}
+      ` : `<div style="font-size:10px;color:#f97316;text-align:center">✦ Max tier reached ✦</div>`}}
+    </div>`;
+  }}
+
   return `
     <div class="civ-detail-header">
       <div>
@@ -1346,7 +1516,8 @@ function buildCivDetail(name) {{
       <span style="font-size:10px;color:#475569;cursor:pointer;padding:3px 8px;border:1px solid #1e2130;border-radius:6px;flex-shrink:0" onclick="collapseCiv(event)">✕</span>
     </div>
     ${{statsHtml}}
-    ${{sections}}`;
+    ${{sections}}
+    ${{upgradeHtml}}`;
 }}
 
 let expandedCiv = null;
@@ -1375,15 +1546,15 @@ function addTilt(tile) {{
       shine.style.background = [
         `linear-gradient(${{angle}}deg,
           transparent ${{(+shift1-22).toFixed(1)}}%,
-          rgba(255,255,255,0.03) ${{(+shift1-4).toFixed(1)}}%,
-          rgba(255,255,255,0.12) ${{shift1}}%,
-          rgba(255,255,255,0.03) ${{(+shift1+4).toFixed(1)}}%,
+          rgba(255,255,255,0.01) ${{(+shift1-4).toFixed(1)}}%,
+          rgba(255,255,255,0.06) ${{shift1}}%,
+          rgba(255,255,255,0.01) ${{(+shift1+4).toFixed(1)}}%,
           transparent ${{(+shift1+22).toFixed(1)}}%)`,
         `linear-gradient(${{angle}}deg,
           transparent ${{(+shift2-15).toFixed(1)}}%,
-          rgba(255,255,255,0.02) ${{(+shift2-3).toFixed(1)}}%,
-          rgba(255,255,255,0.07) ${{shift2}}%,
-          rgba(255,255,255,0.02) ${{(+shift2+3).toFixed(1)}}%,
+          rgba(255,255,255,0.01) ${{(+shift2-3).toFixed(1)}}%,
+          rgba(255,255,255,0.03) ${{shift2}}%,
+          rgba(255,255,255,0.01) ${{(+shift2+3).toFixed(1)}}%,
           transparent ${{(+shift2+15).toFixed(1)}}%)`,
       ].join(",");
     }}
@@ -1428,34 +1599,49 @@ function buildCivGrid(filter) {{
       ? `<span class="civ-tile-played">${{stats.wins}}W / ${{stats.played}}G</span>`
       : "";
 
+    const tier = LOGGED_IN_ID ? getCivTier(name) : "normal";
+    const tierInfo = TIER_LABELS[tier];
     const tile = document.createElement("div");
-    tile.className = "civ-tile";
+    tile.className = "civ-tile" + (tier !== "normal" ? " tier-"+tier : "");
     tile.id = "civ-tile-" + name.replace(/\s+/g,'_');
+    tile.dataset.tier = tier;
     // Full info for card view
     const allEntries = civ.entries.filter(e => e.type !== "Bias");
     const entryRows = allEntries.map(e => {{
       const color = TYPE_COLORS[e.type] || "#475569";
       const icon  = CIVPEDIA_ICONS[e.type] || "•";
-      return `<div style="margin-bottom:4px;padding-left:6px;border-left:2px solid ${{color}}22">
-        <div style="font-size:7px;color:${{color}};letter-spacing:1px;margin-bottom:1px">${{icon}} ${{e.type.toUpperCase()}}</div>
-        <div style="font-size:8px;font-weight:700;color:#e2e8f0;margin-bottom:1px">${{e.name}}</div>
-        ${{e.desc ? `<div class="civ-tile-desc">${{e.desc}}</div>` : ""}}
+      return `<div style="padding-left:7px;border-left:2px solid ${{color}}55">
+        <div style="font-size:8px;color:${{color}};letter-spacing:1px;margin-bottom:1px">${{icon}} ${{e.type.toUpperCase()}}</div>
+        <div style="font-size:9px;font-weight:700;color:#e2e8f0;margin-bottom:2px;line-height:1.2">${{e.name}}</div>
+        ${{e.desc ? `<div style="font-size:8px;color:#64748b;line-height:1.5;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${{e.desc}}</div>` : ""}}
       </div>`;
     }}).join("");
 
     tile.innerHTML = `
       <div class="civ-tile-shine"></div>
-      <div class="civ-tile-top">
-        <div class="civ-tile-map">${{isCoastal?"⛵":"🏕️"}}</div>
-        ${{playedBadge}}
+      ${{tier !== "normal" ? `<div class="tier-badge">${{tierInfo.icon}}</div>` : ""}}
+
+      <!-- Card view content — hidden when expanded -->
+      <div class="civ-card-content" style="display:flex;flex-direction:column;flex:1;min-height:0">
+        <div class="civ-tile-top">
+          <div class="civ-tile-map">${{isCoastal?"⛵":"🏕️"}}</div>
+          ${{playedBadge}}
+        </div>
+        <div class="civ-tile-name">${{name}}</div>
+        <div class="civ-tile-leader">${{civ.leader}}</div>
+        <div class="civ-tile-divider"></div>
+        <div style="flex:1;display:flex;flex-direction:column;gap:5px">
+          ${{entryRows}}
+        </div>
+        ${{stats.played > 0 ? `
+          <div style="margin-top:auto;padding-top:6px;border-top:1px solid #1e2130;display:flex;gap:8px;font-size:7px;color:#475569;flex-shrink:0">
+            <span style="color:#22c55e;font-weight:700">${{stats.wins}}W</span>
+            <span>${{stats.played}}G</span>
+            <span style="color:${{stats.wr>=50?'#22c55e':'#ef4444'}}">${{stats.wr}}%WR</span>
+          </div>` : ""}}
       </div>
-      <div class="civ-tile-name">${{name}}</div>
-      <div class="civ-tile-leader">${{civ.leader}}</div>
-      <div class="civ-tile-divider"></div>
-      <div style="flex:1;overflow:hidden;display:flex;flex-direction:column;gap:4px;min-height:0">
-        ${{entryRows}}
-      </div>
-      ${{stats.played > 0 ? `<div style="margin-top:6px;padding-top:5px;border-top:1px solid #1e2130;display:flex;gap:6px;font-size:7px;color:#475569"><span style="color:#22c55e;font-weight:700">${{stats.wins}}W</span><span>${{stats.played}}G</span><span style="color:${{stats.wr>=50?'#22c55e':'#ef4444'}}">${{stats.wr}}%</span></div>` : ""}}
+
+      <!-- Expanded detail — hidden when collapsed -->
       <div class="civ-detail">${{buildCivDetail(name)}}</div>`;
 
     tile.onclick = (ev) => {{
@@ -1858,7 +2044,7 @@ if (LOGGED_IN_ID && LOGGED_IN_NAME) {{
   const favLabel = FAV_CIV ? ` · ${{FAV_CIV}}` : "";
   authArea.innerHTML = `
     <div style="display:flex;align-items:center;gap:8px">
-      <button class="btn btn-ghost" onclick="openSettingsModal()" style="font-size:10px;padding:4px 10px">👤 ${{displayLabel}}${{favLabel}}</button>
+      <button class="btn btn-ghost" id="nameBtn" style="font-size:10px;padding:4px 10px" onclick="handleNameClick()" ondblclick="return false">👤 ${{displayLabel}}${{favLabel}}</button>
       <a href="/logout" style="font-size:10px;color:#475569;text-decoration:none;padding:4px 10px;border:1px solid #1e2130;border-radius:6px">logout</a>
     </div>`;
 
@@ -1997,6 +2183,92 @@ async function leaveLobby(hostId) {{
 }}
 
 function closeModal() {{ document.getElementById("modalContainer").innerHTML = ""; }}
+
+// ── Easter Egg ────────────────────────────────────────────────────────────────
+let _nameClickCount = 0;
+let _nameClickTimer = null;
+function handleNameClick() {{
+  _nameClickCount++;
+  clearTimeout(_nameClickTimer);
+  if (_nameClickCount === 3) {{
+    _nameClickCount = 0;
+    openEasterEgg();
+    return;
+  }}
+  if (_nameClickCount === 1) {{
+    // First click — also open settings after short delay if no triple click
+    _nameClickTimer = setTimeout(() => {{
+      if (_nameClickCount < 3) openSettingsModal();
+      _nameClickCount = 0;
+    }}, 300);
+  }} else {{
+    _nameClickTimer = setTimeout(() => {{ _nameClickCount = 0; }}, 400);
+  }}
+}}
+
+function openEasterEgg() {{
+  document.getElementById("easterEgg").style.display = "block";
+
+  // Card tier showcase
+  const tiers = ["normal","bronze","silver","gold","diamond"];
+  const tierBgs = {{
+    normal:  "background:#0d1017;border-color:#1e2130",
+    bronze:  "background:linear-gradient(160deg,#1a0e05,#0d0805,#1a1005);border-color:#c8762e",
+    silver:  "background:linear-gradient(160deg,#111418,#0a0d10,#111318);border-color:#8fa3b8",
+    gold:    "background:linear-gradient(160deg,#1a1500,#0d0e00,#1a1200);border-color:#d4a500",
+    diamond: "background:linear-gradient(160deg,#020d1a,#010810,#020a18);border-color:#22d3ee",
+  }};
+  const eggCards = document.getElementById("eggCards");
+  eggCards.innerHTML = tiers.map(t => {{
+    const info = TIER_LABELS[t];
+    return `<div style="border:1px solid;border-radius:10px;padding:12px 10px;text-align:center;${{tierBgs[t]}};aspect-ratio:5/7;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px">
+      <div style="font-size:22px">${{info.icon||"🃏"}}</div>
+      <div style="font-family:Cinzel,serif;font-size:10px;color:${{info.color}};font-weight:700">${{info.label}}</div>
+      ${{t!=="normal"?`<div style="font-size:8px;color:#475569">${{Object.values({{bronze:1,silver:2,gold:3,diamond:4}})[tiers.indexOf(t)-1]}} pts</div>`:"<div style='font-size:8px;color:#334155'>free</div>"}}
+    </div>`;
+  }}).join("");
+
+  // Secret stats
+  const totalGames = HISTORY.length;
+  const totalPlayers = PLAYERS.length;
+  const mostPlayedCiv = (() => {{
+    const counts = {{}};
+    HISTORY.forEach(g => g.players.forEach(p => {{ if(p.civ) counts[p.civ] = (counts[p.civ]||0)+1; }}));
+    return Object.entries(counts).sort((a,b)=>b[1]-a[1])[0];
+  }})();
+  const biggestEloSwing = (() => {{
+    let max = 0, who = "", what = "";
+    HISTORY.forEach(g => g.players.forEach(p => {{
+      const d = Math.abs((p.elo_after||0) - (p.elo_before||0));
+      if (d > max) {{ max = d; who = p.name; what = d > 0 ? "+"+d : ""+d; }}
+    }}));
+    return {{max, who}};
+  }})();
+  const mostWins = PLAYERS.reduce((a,b) => (LB_DATA[b.id]?.wins||0) > (LB_DATA[a.id]?.wins||0) ? b : a, PLAYERS[0]);
+  document.getElementById("eggStats").innerHTML = [
+    `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1e2130;font-size:11px"><span style="color:#475569">Total games played</span><span style="color:#e2e8f0;font-weight:700">${{totalGames}}</span></div>`,
+    `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1e2130;font-size:11px"><span style="color:#475569">Registered players</span><span style="color:#e2e8f0;font-weight:700">${{totalPlayers}}</span></div>`,
+    mostPlayedCiv ? `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1e2130;font-size:11px"><span style="color:#475569">Most played civ</span><span style="color:#e2e8f0;font-weight:700">${{mostPlayedCiv[0]}} (${{mostPlayedCiv[1]}}x)</span></div>` : "",
+    biggestEloSwing.who ? `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #1e2130;font-size:11px"><span style="color:#475569">Biggest Elo swing</span><span style="color:#f97316;font-weight:700">${{biggestEloSwing.who}} ±${{biggestEloSwing.max}}</span></div>` : "",
+    mostWins ? `<div style="display:flex;justify-content:space-between;padding:6px 0;font-size:11px"><span style="color:#475569">Most wins</span><span style="color:#22c55e;font-weight:700">${{mostWins.name}} (${{LB_DATA[mostWins.id]?.wins||0}})</span></div>` : "",
+  ].join("");
+
+  // Fun facts
+  const facts = [
+    "The Deity rank requires 1600 Elo — only achievable through consistent excellence.",
+    "Diamond card upgrades cost 10 wins total. Choose wisely.",
+    "Triple-clicking your name was the hardest button to find on this site.",
+    `There have been ${{HISTORY.reduce((a,g)=>a+g.players.length,0)}} total player-game appearances across all matches.`,
+    "This easter egg has no gameplay benefit whatsoever.",
+  ];
+  document.getElementById("eggFacts").innerHTML = facts.map(f =>
+    `<div style="background:#0d1017;border:1px solid #1e2130;border-radius:8px;padding:12px 14px;font-size:10px;color:#475569;line-height:1.6">💡 ${{f}}</div>`
+  ).join("");
+}}
+
+function closeEgg() {{
+  document.getElementById("easterEgg").style.display = "none";
+}}
 
 // ── History filter ─────────────────────────────────────────────────────────
 let historyFilter = "all";
@@ -2296,7 +2568,9 @@ async def handle_api_game_report(request):
         p = get_player(data, info["id"])
         old_elo, new_elo = info["old_elo"], new_elos[i]
         p["elo"] = new_elo
-        if i == 0: p["wins"] += 1
+        if i == 0:
+            p["wins"] += 1
+            p.setdefault("prefs", {})["upgrade_points"] = p.get("prefs", {}).get("upgrade_points", 0) + 1
         else: p["losses"] += 1
         civ = info["civ"]
         if civ:
@@ -2346,6 +2620,35 @@ async def handle_api_lobby_leave(request):
     save_all_data(all_data)
     return web.Response(text="OK")
 
+async def handle_api_upgrade_card(request):
+    session_token = request.cookies.get("session")
+    if not session_token: return web.Response(text="Not logged in", status=401)
+    user_id, _ = verify_session_token(session_token)
+    if not user_id: return web.Response(text="Invalid session", status=401)
+    body = await request.json()
+    guild_id = body.get("guild", "")
+    civ = body.get("civ", "")
+    all_data = load_all_data()
+    data = get_server_data(all_data, guild_id)
+    if user_id not in data["players"]:
+        return web.Response(text="Player not found", status=404)
+    prefs = data["players"][user_id].setdefault("prefs", {})
+    tiers = ["normal","bronze","silver","gold","diamond"]
+    costs = {"bronze":1,"silver":2,"gold":3,"diamond":4}
+    current = prefs.get("card_tiers", {}).get(civ, "normal")
+    idx = tiers.index(current)
+    if idx >= len(tiers) - 1:
+        return web.Response(text="Already max tier", status=400)
+    next_tier = tiers[idx + 1]
+    cost = costs[next_tier]
+    points = prefs.get("upgrade_points", 0)
+    if points < cost:
+        return web.Response(text="Not enough points", status=400)
+    prefs["upgrade_points"] = points - cost
+    prefs.setdefault("card_tiers", {})[civ] = next_tier
+    save_all_data(all_data)
+    return web.Response(text="OK")
+
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/graph", handle_graph)
@@ -2354,6 +2657,7 @@ async def start_web_server():
     app.router.add_get("/logout", handle_logout)
     app.router.add_get("/data", handle_data)
     app.router.add_post("/api/prefs", handle_api_prefs)
+    app.router.add_post("/api/upgrade_card", handle_api_upgrade_card)
     app.router.add_post("/api/lobby/create", handle_api_lobby_create)
     app.router.add_post("/api/lobby/join", handle_api_lobby_join)
     app.router.add_post("/api/lobby/leave", handle_api_lobby_leave)
