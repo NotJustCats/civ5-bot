@@ -575,30 +575,37 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
     transform: perspective(600px) rotateX(0deg) rotateY(0deg) !important;
     box-shadow: 0 0 0 1px #f97316;
   }}
-  /* Shine layers */
+  /* Anime-style shine — single diagonal sweep band */
   .civ-tile-shine {{
-    position: absolute; inset: 0; border-radius: 14px; pointer-events: none; opacity: 0;
-    transition: opacity 0.2s;
-    /* layer 1: soft mouse-following radial glow */
-    /* layer 2: streak — set dynamically via JS */
+    position: absolute; inset: 0; border-radius: 12px; pointer-events: none; opacity: 0;
+    transition: opacity 0.15s;
+    /* Two soft diagonal lines like light catching a flat surface */
     background:
-      radial-gradient(circle at 50% 50%, rgba(255,255,255,0.07) 0%, transparent 60%),
-      linear-gradient(135deg, transparent 30%, rgba(255,255,255,0.04) 50%, transparent 70%);
+      linear-gradient(115deg,
+        transparent 20%,
+        rgba(255,255,255,0.03) 38%,
+        rgba(255,255,255,0.10) 42%,
+        rgba(255,255,255,0.03) 46%,
+        transparent 60%),
+      linear-gradient(115deg,
+        transparent 50%,
+        rgba(255,255,255,0.02) 62%,
+        rgba(255,255,255,0.06) 65%,
+        rgba(255,255,255,0.02) 68%,
+        transparent 80%);
   }}
-  .civ-tile:hover .civ-tile-shine {{ opacity: 1; }}
-  /* Border shimmer on hover */
-  .civ-tile:hover {{
-    border-color: rgba(255,255,255,0.12);
-  }}
+  .civ-tile:not(.expanded):hover .civ-tile-shine {{ opacity: 1; }}
   /* Card content */
-  .civ-tile-top {{ display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 10px; }}
-  .civ-tile-map {{ font-size: 28px; line-height: 1; }}
-  .civ-tile-played {{ font-size: 9px; color: #f97316; font-weight: 700; background: #1a0f00; border: 1px solid #f9731644; border-radius: 6px; padding: 2px 6px; }}
-  .civ-tile-name {{ font-family: 'Cinzel', serif; font-size: 14px; font-weight: 700; color: #e2e8f0; margin-bottom: 3px; line-height: 1.2; }}
-  .civ-tile-leader {{ font-size: 10px; color: #475569; margin-bottom: 10px; letter-spacing: 1px; }}
-  .civ-tile-ability {{ font-size: 10px; color: #94a3b8; font-style: italic; margin-bottom: 10px; line-height: 1.4; padding: 6px 8px; background: #080a0f; border-radius: 6px; border-left: 2px solid #f97316; }}
-  .civ-tile-tags {{ display: flex; flex-wrap: wrap; gap: 4px; }}
-  .civ-tile-tag {{ font-size: 9px; padding: 2px 7px; border-radius: 5px; }}
+  .civ-tile-top {{ display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 6px; }}
+  .civ-tile-map {{ font-size: 22px; line-height: 1; }}
+  .civ-tile-played {{ font-size: 8px; color: #f97316; font-weight: 700; background: #1a0f00; border: 1px solid #f9731644; border-radius: 5px; padding: 1px 5px; }}
+  .civ-tile-name {{ font-family: 'Cinzel', serif; font-size: 12px; font-weight: 700; color: #e2e8f0; margin-bottom: 1px; line-height: 1.2; }}
+  .civ-tile-leader {{ font-size: 8px; color: #475569; margin-bottom: 6px; letter-spacing: 1px; }}
+  .civ-tile-ability {{ font-size: 8px; color: #94a3b8; margin-bottom: 7px; line-height: 1.4; padding: 4px 7px; background: #080a0f; border-radius: 5px; border-left: 2px solid #f97316; }}
+  .civ-tile-divider {{ height: 1px; background: #1e2130; margin: 6px 0; }}
+  .civ-tile-tags {{ display: flex; flex-wrap: wrap; gap: 3px; }}
+  .civ-tile-tag {{ font-size: 7px; padding: 1px 5px; border-radius: 4px; line-height: 1.6; }}
+  .civ-tile-desc {{ font-size: 7px; color: #475569; line-height: 1.5; margin-top: 3px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }}
   /* Expanded detail */
   .civ-detail {{ display: none; margin-top: 16px; padding-top: 16px; border-top: 1px solid #1e2130; }}
   .civ-tile.expanded .civ-detail {{ display: block; }}
@@ -1344,59 +1351,49 @@ function buildCivDetail(name) {{
 
 let expandedCiv = null;
 
-// ── 3D tilt + specular shine effect ─────────────────────────────────────────
+// ── 3D tilt + anime diagonal shine ──────────────────────────────────────────
 function addTilt(tile) {{
   const shine = tile.querySelector(".civ-tile-shine");
 
   tile.addEventListener("mousemove", (e) => {{
     if (tile.classList.contains("expanded")) return;
     const rect = tile.getBoundingClientRect();
-    const cx = rect.left + rect.width / 2;
-    const cy = rect.top + rect.height / 2;
-    // Normalised -1 to 1
-    const dx = (e.clientX - cx) / (rect.width / 2);
-    const dy = (e.clientY - cy) / (rect.height / 2);
+    const dx = (e.clientX - rect.left - rect.width  / 2) / (rect.width  / 2); // -1 to 1
+    const dy = (e.clientY - rect.top  - rect.height / 2) / (rect.height / 2);
     const rotX = -dy * 12;
     const rotY =  dx * 12;
-
     tile.style.transform = `perspective(700px) rotateX(${{rotX}}deg) rotateY(${{rotY}}deg) scale(1.04)`;
 
+    // Anime shine: shift the diagonal band position based on tilt
+    // dx=-1 (left tilt) → band sweeps left, dx=1 → band sweeps right
     if (shine) {{
-      // Mouse position as percentage within card (0-100)
-      const px = ((e.clientX - rect.left) / rect.width * 100).toFixed(1);
-      const py = ((e.clientY - rect.top) / rect.height * 100).toFixed(1);
-
-      // Streak angle mirrors the tilt: as card tilts right the streak moves left-to-right
-      // Angle in degrees: 90 when flat, shifts with dx/dy
-      const streakAngle = (90 + rotY * 1.5 - rotX * 0.5).toFixed(1);
-
-      // Streak position: opposite to mouse (light source is off-screen in the tilt direction)
-      const streakPos = (50 - dx * 35).toFixed(1);
-
+      // Shift the two shine lines sideways with tilt — creates the illusion of
+      // flat lines sliding across the surface as the card angle changes
+      const shift1 = (42 + dx * 25).toFixed(1); // primary band centre (%)
+      const shift2 = (65 + dx * 20).toFixed(1); // secondary band centre (%)
+      const angle  = (115 + dy * 5).toFixed(1); // slight angle change with vertical tilt
       shine.style.background = [
-        // 1. Soft radial glow centred on mouse — like a torch
-        `radial-gradient(ellipse 80% 60% at ${{px}}% ${{py}}%, rgba(255,255,255,0.09) 0%, transparent 70%)`,
-        // 2. Narrow bright streak — the specular highlight
-        `linear-gradient(${{streakAngle}}deg,
-          transparent ${{(+streakPos - 22).toFixed(1)}}%,
-          rgba(255,255,255,0.04) ${{(+streakPos - 8).toFixed(1)}}%,
-          rgba(255,255,255,0.11) ${{(+streakPos - 1).toFixed(1)}}%,
-          rgba(255,255,255,0.13) ${{streakPos}}%,
-          rgba(255,255,255,0.11) ${{(+streakPos + 1).toFixed(1)}}%,
-          rgba(255,255,255,0.04) ${{(+streakPos + 8).toFixed(1)}}%,
-          transparent ${{(+streakPos + 22).toFixed(1)}}%)`,
-        // 3. Edge rim light — subtle border glow on the lit side
-        `radial-gradient(ellipse 120% 120% at ${{(50 - dx * 60).toFixed(1)}}% ${{(50 - dy * 60).toFixed(1)}}%, rgba(255,255,255,0.05) 0%, transparent 55%)`,
+        `linear-gradient(${{angle}}deg,
+          transparent ${{(+shift1-22).toFixed(1)}}%,
+          rgba(255,255,255,0.03) ${{(+shift1-4).toFixed(1)}}%,
+          rgba(255,255,255,0.12) ${{shift1}}%,
+          rgba(255,255,255,0.03) ${{(+shift1+4).toFixed(1)}}%,
+          transparent ${{(+shift1+22).toFixed(1)}}%)`,
+        `linear-gradient(${{angle}}deg,
+          transparent ${{(+shift2-15).toFixed(1)}}%,
+          rgba(255,255,255,0.02) ${{(+shift2-3).toFixed(1)}}%,
+          rgba(255,255,255,0.07) ${{shift2}}%,
+          rgba(255,255,255,0.02) ${{(+shift2+3).toFixed(1)}}%,
+          transparent ${{(+shift2+15).toFixed(1)}}%)`,
       ].join(",");
     }}
   }});
 
   tile.addEventListener("mouseleave", () => {{
+    tile.style.transition = "transform 0.5s cubic-bezier(0.23,1,0.32,1), border-color 0.2s, box-shadow 0.2s";
     tile.style.transform = "perspective(700px) rotateX(0deg) rotateY(0deg) scale(1)";
-    tile.style.transition = "transform 0.4s ease, border-color 0.2s, box-shadow 0.2s";
     if (shine) shine.style.background = "";
-    // Reset transition after snap-back
-    setTimeout(() => {{ tile.style.transition = "transform 0.08s ease, border-color 0.2s, box-shadow 0.2s"; }}, 400);
+    setTimeout(() => {{ tile.style.transition = "transform 0.08s ease, border-color 0.2s, box-shadow 0.2s"; }}, 500);
   }});
 
   tile.addEventListener("mouseenter", () => {{
@@ -1434,6 +1431,18 @@ function buildCivGrid(filter) {{
     const tile = document.createElement("div");
     tile.className = "civ-tile";
     tile.id = "civ-tile-" + name.replace(/\s+/g,'_');
+    // Full info for card view
+    const allEntries = civ.entries.filter(e => e.type !== "Bias");
+    const entryRows = allEntries.map(e => {{
+      const color = TYPE_COLORS[e.type] || "#475569";
+      const icon  = CIVPEDIA_ICONS[e.type] || "•";
+      return `<div style="margin-bottom:4px;padding-left:6px;border-left:2px solid ${{color}}22">
+        <div style="font-size:7px;color:${{color}};letter-spacing:1px;margin-bottom:1px">${{icon}} ${{e.type.toUpperCase()}}</div>
+        <div style="font-size:8px;font-weight:700;color:#e2e8f0;margin-bottom:1px">${{e.name}}</div>
+        ${{e.desc ? `<div class="civ-tile-desc">${{e.desc}}</div>` : ""}}
+      </div>`;
+    }}).join("");
+
     tile.innerHTML = `
       <div class="civ-tile-shine"></div>
       <div class="civ-tile-top">
@@ -1442,8 +1451,11 @@ function buildCivGrid(filter) {{
       </div>
       <div class="civ-tile-name">${{name}}</div>
       <div class="civ-tile-leader">${{civ.leader}}</div>
-      ${{ability ? `<div class="civ-tile-ability">⚡ ${{ability.name}}</div>` : ""}}
-      <div class="civ-tile-tags">${{tags}}</div>
+      <div class="civ-tile-divider"></div>
+      <div style="flex:1;overflow:hidden;display:flex;flex-direction:column;gap:4px;min-height:0">
+        ${{entryRows}}
+      </div>
+      ${{stats.played > 0 ? `<div style="margin-top:6px;padding-top:5px;border-top:1px solid #1e2130;display:flex;gap:6px;font-size:7px;color:#475569"><span style="color:#22c55e;font-weight:700">${{stats.wins}}W</span><span>${{stats.played}}G</span><span style="color:${{stats.wr>=50?'#22c55e':'#ef4444'}}">${{stats.wr}}%</span></div>` : ""}}
       <div class="civ-detail">${{buildCivDetail(name)}}</div>`;
 
     tile.onclick = (ev) => {{
