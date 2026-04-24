@@ -512,6 +512,7 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
   .btn {{ padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer; font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; transition: opacity 0.15s; }}
   .btn:hover {{ opacity: 0.8; }}
   .btn-primary {{ background: #f97316; color: #080a0f; }}
+  .btn-orange {{ background: #f97316; color: #080a0f; }}
   .btn-ghost {{ background: transparent; border: 1px solid #1e2130; color: #475569; }}
   .hist-filter {{ display: flex; gap: 6px; flex-shrink: 0; margin-bottom: 8px; }}
   .filter-btn {{ padding: 5px 12px; border-radius: 6px; border: 1px solid #1e2130; background: transparent; color: #475569; font-family: 'IBM Plex Mono', monospace; font-size: 10px; cursor: pointer; }}
@@ -1491,10 +1492,10 @@ function buildCivDetail(name) {{
     const color = TYPE_COLORS[e.type] || "#94a3b8";
     const icon = CIVPEDIA_ICONS[e.type] || "•";
     const desc = (e.desc||"")
-      .replace(/\(vs\. [\d\.]+\)/g, m => `<span>${{m}}</span>`)
-      .replace(/\(from [\d\.]+[^)]*\)/g, m => `<span>${{m}}</span>`)
-      .replace(/\(unchanged\)/g, m => `<span>${{m}}</span>`)
-      .replace(/\([^)]*previously[^)]*\)/g, m => `<span>${{m}}</span>`);
+      .replace(/\\(vs\\. [\\d\\.]+\\)/g, m => `<span>${{m}}</span>`)
+      .replace(/\\(from [\\d\\.]+[^)]*\\)/g, m => `<span>${{m}}</span>`)
+      .replace(/\\(unchanged\\)/g, m => `<span>${{m}}</span>`)
+      .replace(/\\([^)]*previously[^)]*\\)/g, m => `<span>${{m}}</span>`);
     return `<div class="civ-section" style="border-left:3px solid ${{color}}">
       <div class="civ-section-type" style="color:${{color}}">${{icon}} ${{e.type.toUpperCase()}}</div>
       ${{e.name ? `<div class="civ-section-name">${{e.name}}</div>` : ""}}
@@ -1631,7 +1632,7 @@ function buildCivGrid(filter) {{
     const tierInfo = TIER_LABELS[tier];
     const tile = document.createElement("div");
     tile.className = "civ-tile" + (tier !== "normal" ? " tier-"+tier : "");
-    tile.id = "civ-tile-" + name.replace(/\s+/g,'_');
+    tile.id = "civ-tile-" + name.replace(/\\s+/g,'_');
     tile.dataset.tier = tier;
     // Full info for card view
     const allEntries = civ.entries.filter(e => e.type !== "Bias");
@@ -1689,7 +1690,7 @@ function toggleCiv(name) {{
   buildCivGrid(searchVal);
   if (expandedCiv) {{
     setTimeout(() => {{
-      const el = document.getElementById("civ-tile-" + expandedCiv.replace(/\s+/g,'_'));
+      const el = document.getElementById("civ-tile-" + expandedCiv.replace(/\\s+/g,'_'));
       if (el) el.scrollIntoView({{behavior:"smooth", block:"nearest"}});
     }}, 50);
   }}
@@ -2028,8 +2029,8 @@ function tblOpenModal(civ, pi, ci, fanCss) {{
   const sections = entries.map(e=>{{
     const color = TYPE_COLORS[e.type]||"#94a3b8";
     const icon  = CIVPEDIA_ICONS[e.type]||"•";
-    const desc  = (e.desc||"").replace(/\(vs\. [\d\.]+\)/g,m=>`<span style="color:#64748b">${{m}}</span>`)
-                              .replace(/\(from [\d\.]+[^)]*\)/g,m=>`<span style="color:#64748b">${{m}}</span>`);
+    const desc  = (e.desc||"").replace(/\\(vs\\. [\\d\\.]+\\)/g,m=>`<span style="color:#64748b">${{m}}</span>`)
+                              .replace(/\\(from [\\d\\.]+[^)]*\\)/g,m=>`<span style="color:#64748b">${{m}}</span>`);
     return `<div style="margin-bottom:10px;padding:10px;background:#080a0f;border:1px solid #1e2130;border-radius:8px;border-left:3px solid ${{color}}">
       <div style="font-size:8px;color:${{color}};letter-spacing:2px;margin-bottom:3px">${{icon}} ${{e.type.toUpperCase()}}</div>
       ${{e.name?`<div style="font-size:12px;font-weight:700;color:#e2e8f0;margin-bottom:4px">${{e.name}}</div>`:""}}
@@ -2327,9 +2328,10 @@ function currentTab() {{
 }}
 
 function refreshPage() {{
-  // Reload data without going back to stats
   const tab = currentTab();
-  window.location.href = window.location.href.split("?")[0] + "?guild=" + guild + "&tab=" + tab;
+  const base = window.location.href.split("?")[0];
+  const g = guild || new URLSearchParams(window.location.search).get("guild") || "";
+  window.location.href = base + "?guild=" + g + "&tab=" + tab;
 }}
 
 // Read tab from URL on load
@@ -2699,8 +2701,8 @@ function buildEggCards() {{
       const color = TYPE_COLORS[e.type] || "#94a3b8";
       const icon  = CIVPEDIA_ICONS[e.type] || "•";
       const desc = (e.desc||"")
-        .replace(/\(vs\. [\d\.]+\)/g, m => `<span style="color:#64748b">${{m}}</span>`)
-        .replace(/\(from [\d\.]+[^)]*\)/g, m => `<span style="color:#64748b">${{m}}</span>`);
+        .replace(/\\(vs\\. [\\d\\.]+\\)/g, m => `<span style="color:#64748b">${{m}}</span>`)
+        .replace(/\\(from [\\d\\.]+[^)]*\\)/g, m => `<span style="color:#64748b">${{m}}</span>`);
       return `<div class="civ-section" style="border-left:3px solid ${{color}}">
         <div class="civ-section-type" style="color:${{color}}">${{icon}} ${{e.type.toUpperCase()}}</div>
         ${{e.name ? `<div class="civ-section-name">${{e.name}}</div>` : ""}}
@@ -2896,10 +2898,22 @@ function filterHistory(mode) {{
 </html>"""
 
 
+async def handle_root(request):
+    all_data = load_all_data()
+    if all_data:
+        guild_id = next(iter(all_data))
+        raise web.HTTPFound(f"/graph?guild={guild_id}")
+    raise web.HTTPFound("/graph")
+
 async def handle_graph(request):
     guild_id = request.query.get("guild")
     if not guild_id:
-        return web.Response(text="<h2>Missing ?guild= parameter</h2>", content_type="text/html", status=400)
+        # Auto-use first known guild
+        all_data = load_all_data()
+        if all_data:
+            guild_id = next(iter(all_data))
+            raise web.HTTPFound(f"/graph?guild={guild_id}")
+        return web.Response(text="<h2>No guilds found. Use the Discord bot to start a game first.</h2>", content_type="text/html", status=400)
     # Read session cookie
     session_token = request.cookies.get("session")
     logged_in_id = logged_in_name = None
@@ -3234,6 +3248,7 @@ async def handle_api_lobby_leave(request):
 
 async def start_web_server():
     app = web.Application()
+    app.router.add_get("/", handle_root)
     app.router.add_get("/graph", handle_graph)
     app.router.add_get("/login", handle_login)
     app.router.add_get("/callback", handle_callback)
