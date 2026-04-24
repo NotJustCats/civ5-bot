@@ -713,11 +713,11 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
 </div>
 
 <div class="tabs">
-  <div class="tab active" onclick="switchTab('stats')">STATS</div>
-  <div class="tab" onclick="switchTab('live')">LIVE GAMES</div>
-  <div class="tab" onclick="switchTab('history')">HISTORY</div>
-  <div class="tab" id="hostTab" onclick="switchTab('host')" style="display:none">HOST GAME</div>
-  <div class="tab" id="civpediaTab" onclick="handleCivpediaClick()">CIVILOPEDIA</div>
+  <div class="tab active" data-tab="stats" onclick="switchTab('stats')">STATS</div>
+  <div class="tab" data-tab="live" onclick="switchTab('live')">LIVE GAMES</div>
+  <div class="tab" data-tab="history" onclick="switchTab('history')">HISTORY</div>
+  <div class="tab" id="hostTab" data-tab="host" onclick="switchTab('host')" style="display:none">HOST GAME</div>
+  <div class="tab" id="civpediaTab" data-tab="civpedia" onclick="handleCivpediaClick()">CIVILOPEDIA</div>
 </div>
 
 <!-- STATS PAGE -->
@@ -928,12 +928,13 @@ function victoryBadge(vt) {{
 // ── Tab switching ─────────────────────────────────────────────────────────────
 let _pollInterval = null;
 function switchTab(name) {{
-  document.querySelectorAll(".tab").forEach((t,i) => {{
-    const names = ["stats","live","history","host","civpedia"];
-    t.classList.toggle("active", names[i] === name);
+  document.querySelectorAll(".tab").forEach(t => {{
+    const tab = t.getAttribute("data-tab");
+    if (tab) t.classList.toggle("active", tab === name);
   }});
   document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
-  document.getElementById("page-"+name).classList.add("active");
+  const pg = document.getElementById("page-"+name);
+  if (pg) pg.classList.add("active");
   if (name === "live") buildLive();
   if (name === "history") buildHistory();
   if (name === "host") buildHostPage();
@@ -2775,15 +2776,15 @@ let _civTabClicks = 0, _civTabTimer = null;
 function handleCivpediaClick() {{
   _civTabClicks++;
   clearTimeout(_civTabTimer);
-  if (_civTabClicks === 3) {{
+  if (_civTabClicks >= 3) {{
     _civTabClicks = 0;
     openTableOverlay();
     return;
   }}
-  _civTabTimer = setTimeout(() => {{
-    if (_civTabClicks === 1) switchTab("civpedia");
-    _civTabClicks = 0;
-  }}, 350);
+  // Always switch to civpedia immediately on any click
+  switchTab("civpedia");
+  // If they click again within 400ms, count toward triple
+  _civTabTimer = setTimeout(() => {{ _civTabClicks = 0; }}, 400);
 }}
 
 let _tblPollInterval = null;
