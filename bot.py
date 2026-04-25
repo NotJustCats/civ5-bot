@@ -2583,6 +2583,8 @@ async function adminDeleteMatch(histIdx, label) {{
   }}
 }}
 </script>
+</body>
+</html>"""
 
 
 async def handle_graph(request):
@@ -3201,7 +3203,7 @@ async def handle_api_admin_add_match(request):
 
 
 async def handle_api_admin_edit_match(request):
-    """Admin: edit an existing match by index — recalculates Elo deltas."""
+    """Admin: edit an existing match by index - recalculates Elo deltas."""
     session_token = request.cookies.get("session")
     if not session_token: return web.Response(text="Not logged in", status=401)
     user_id, _ = verify_session_token(session_token)
