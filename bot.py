@@ -2639,6 +2639,13 @@ async def handle_callback(request):
             user_data = await resp.json()
     user_id = user_data.get("id", "")
     username = user_data.get("username", "unknown")
+    # Register the user as a player immediately on login so they appear on the
+    # leaderboard / admin dropdowns even before they've played a game.
+    if guild_id and user_id:
+        all_data = load_all_data()
+        data = get_server_data(all_data, guild_id)
+        get_player(data, user_id, username)
+        save_all_data(all_data)
     session_token = make_session_token(user_id, username)
     response = web.HTTPFound(f"/graph?guild={guild_id}")
     response.set_cookie("session", session_token, max_age=60*60*24*30, httponly=True, samesite="Lax")
