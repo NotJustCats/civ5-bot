@@ -2420,11 +2420,15 @@ function adminAddRow() {{
   const idx = _adminRowCount;
   const opts = _adminPlayers.map(p => `<option value="${{p.id}}">${{p.name}} (${{p.elo}} Elo)</option>`).join("");
   const civOpts = ALL_CIVS.map(c => `<option value="${{c}}">${{c}}</option>`).join("");
+  // Build position options 1-8
+  const posOpts = [1,2,3,4,5,6,7,8].map(n => `<option value="${{n}}"${{n===idx?" selected":""}}>${{n}}${{n===1?" 🥇":n===2?" 🥈":n===3?" 🥉":""}}</option>`).join("");
   const row = document.createElement("div");
   row.id = "adminRow-"+idx;
   row.style.cssText = "display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap";
   row.innerHTML = `
-    <span style="font-size:11px;color:#475569;width:20px;text-align:right">#${{idx}}</span>
+    <select class="form-select" id="adminRowFinish-${{idx}}" style="width:80px;flex-shrink:0;margin-bottom:0" title="Finishing position">
+      ${{posOpts}}
+    </select>
     <select class="form-select" id="adminRowPlayer-${{idx}}" style="flex:1;min-width:160px;margin-bottom:0">
       <option value="">— Player —</option>
       ${{opts}}
@@ -2440,16 +2444,24 @@ function adminAddRow() {{
 async function adminSubmitAdd() {{
   const rows = document.querySelectorAll("[id^='adminRow-']");
   const players = [];
-  let finish = 1;
   for (const row of rows) {{
     const idx = row.id.split("-")[1];
-    const pid = document.getElementById("adminRowPlayer-"+idx)?.value;
-    const civ = document.getElementById("adminRowCiv-"+idx)?.value || null;
+    const pid    = document.getElementById("adminRowPlayer-"+idx)?.value;
+    const civ    = document.getElementById("adminRowCiv-"+idx)?.value || null;
+    const finish = parseInt(document.getElementById("adminRowFinish-"+idx)?.value || "0");
     if (!pid) {{ alert("Select a player for every row."); return; }}
-    if (players.find(p => p.id === pid)) {{ alert("Duplicate player: " + pid); return; }}
-    players.push({{id: pid, civ, finish: finish++}});
+    if (!finish) {{ alert("Select a finishing position for every row."); return; }}
+    if (players.find(p => p.id === pid)) {{ alert("Duplicate player selected."); return; }}
+    if (players.find(p => p.finish === finish)) {{ alert("Duplicate finishing position " + finish + " — each player must have a unique place."); return; }}
+    players.push({{id: pid, civ, finish}});
   }}
   if (players.length < 2) {{ alert("Need at least 2 players."); return; }}
+  // Validate positions are 1..N
+  const finishes = players.map(p => p.finish).sort((a,b)=>a-b);
+  if (finishes[0] !== 1 || finishes[finishes.length-1] !== players.length) {{
+    alert("Finishing positions must run 1 to " + players.length + " with no gaps or duplicates.");
+    return;
+  }}
   const victory_type = document.getElementById("adminAddVictory").value || null;
   const difficulty   = document.getElementById("adminAddDiff").value;
   const map_type     = document.getElementById("adminAddMap").value;
@@ -2503,9 +2515,14 @@ function adminOpenEdit(histIdx) {{
   const civOpts = civ => ALL_CIVS.map(c => `<option value="${{c}}"${{c===civ?" selected":""}}>${{c}}</option>`).join("");
   const playerOpts = (selId) => _adminPlayers.map(p => `<option value="${{p.id}}"${{p.id===selId?" selected":""}}>${{p.name}}</option>`).join("");
 
+  const posOpts = (sel, total) => [1,2,3,4,5,6,7,8].slice(0,total).map(n =>
+    `<option value="${{n}}"${{n===sel?" selected":""}}>${{n}}${{n===1?" 🥇":n===2?" 🥈":n===3?" 🥉":""}}</option>`).join("");
+
   const rows = m.players.map((mp, i) => `
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
-      <span style="font-size:11px;color:#475569;width:20px;text-align:right">#${{mp.finish}}</span>
+      <select class="form-select" id="editRowFinish-${{i}}" style="width:80px;flex-shrink:0;margin-bottom:0" title="Finishing position">
+        ${{posOpts(mp.finish, m.players.length)}}
+      </select>
       <select class="form-select" id="editRowPlayer-${{i}}" style="flex:1;min-width:160px;margin-bottom:0">
         ${{playerOpts(mp.id)}}
       </select>
@@ -2545,10 +2562,12 @@ function adminOpenEdit(histIdx) {{
 async function adminSubmitEdit(count) {{
   const players = [];
   for (let i = 0; i < count; i++) {{
-    const pid = document.getElementById("editRowPlayer-"+i)?.value;
-    const civ = document.getElementById("editRowCiv-"+i)?.value || null;
+    const pid    = document.getElementById("editRowPlayer-"+i)?.value;
+    const civ    = document.getElementById("editRowCiv-"+i)?.value || null;
+    const finish = parseInt(document.getElementById("editRowFinish-"+i)?.value || "0");
     if (!pid) {{ alert("Select a player for every row."); return; }}
-    players.push({{id: pid, civ, finish: i+1}});
+    if (players.find(p => p.finish === finish)) {{ alert("Duplicate finishing position " + finish + "."); return; }}
+    players.push({{id: pid, civ, finish}});
   }}
   const victory_type = document.getElementById("editVictory").value || null;
   const difficulty   = document.getElementById("editDiff").value;
