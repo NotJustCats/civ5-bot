@@ -20,6 +20,7 @@ K_FACTOR = 48
 MAX_LOBBY_SIZE = 8
 FLOOR_ELO = 100
 PUBLIC_URL = os.getenv("PUBLIC_URL", "").rstrip("/")
+ADMIN_DISCORD_ID = "477111417317883914"  # mew / emu0_0
 DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
 DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
 COOKIE_SECRET = os.getenv("COOKIE_SECRET", secrets.token_hex(32))
@@ -682,6 +683,7 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
   <div class="tab" onclick="switchTab('history')">HISTORY</div>
   <div class="tab" id="hostTab" onclick="switchTab('host')" style="display:none">HOST GAME</div>
   <div class="tab" onclick="switchTab('civpedia')">CIVILOPEDIA</div>
+  <div class="tab" id="adminTab" onclick="switchTab('admin')" style="display:none;color:#ef4444">ADMIN</div>
 </div>
 
 <!-- STATS PAGE -->
@@ -758,6 +760,10 @@ def build_graph_html(guild_id: str, logged_in_id: str = None, logged_in_name: st
 <!-- HOST GAME PAGE -->
 <div class="page" id="page-host">
   <div class="scroll-page" id="hostContent"></div>
+</div>
+<!-- ADMIN PAGE -->
+<div class="page" id="page-admin">
+  <div class="scroll-page" id="adminContent"></div>
 </div>
 <div id="civTooltip" class="civ-tooltip"></div>
 <div id="modalContainer"></div>
@@ -884,7 +890,7 @@ function victoryBadge(vt) {{
 let _pollInterval = null;
 function switchTab(name) {{
   document.querySelectorAll(".tab").forEach((t,i) => {{
-    const names = ["stats","live","history","host","civpedia"];
+    const names = ["stats","live","history","host","civpedia","admin"];
     t.classList.toggle("active", names[i] === name);
   }});
   document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
@@ -893,6 +899,7 @@ function switchTab(name) {{
   if (name === "history") buildHistory();
   if (name === "host") buildHostPage();
   if (name === "civpedia") buildCivGrid("");
+  if (name === "admin") buildAdminPage();
   // Auto-poll on live/host tabs
   clearInterval(_pollInterval);
   if (name === "live" || name === "host") {{
@@ -1848,7 +1855,7 @@ function currentTab() {{
   const active = document.querySelector(".tab.active");
   if (!active) return "stats";
   const idx = Array.from(document.querySelectorAll(".tab")).indexOf(active);
-  return ["stats","live","history","host","civpedia"][idx] || "stats";
+  return ["stats","live","history","host","civpedia","admin"][idx] || "stats";
 }}
 
 async function refreshPage() {{
@@ -2070,6 +2077,11 @@ if (LOGGED_IN_ID && LOGGED_IN_NAME) {{
   // Show host tab
   const ht = document.getElementById("hostTab");
   if (ht) ht.style.display = "block";
+  // Show admin tab if this is the admin account
+  if (LOGGED_IN_ID === "477111417317883914") {{
+    const at = document.getElementById("adminTab");
+    if (at) at.style.display = "block";
+  }}
 
   // Auto-open this player's profile
   const myIdx = PLAYERS.findIndex(p => p.id === LOGGED_IN_ID);
@@ -2338,9 +2350,239 @@ function filterHistory(mode) {{
   event.target.classList.add("active");
   buildHistory();
 }}
+// ── Admin Panel ───────────────────────────────────────────────────────────────
+let _adminPlayers = [];  // cached player list for dropdowns
+
+async function buildAdminPage() {{
+  const el = document.getElementById("adminContent");
+  el.innerHTML = `<div style="color:#475569;font-size:11px;letter-spacing:2px;padding:20px">LOADING...</div>`;
+
+  // Fetch player list for dropdowns
+  try {{
+    const r = await fetch("/api/admin/players?guild=" + encodeURIComponent(guild));
+    if (!r.ok) {{ el.innerHTML = `<div style="color:#ef4444;padding:20px">⛔ Not authorised</div>`; return; }}
+    _adminPlayers = await r.json();
+  }} catch(e) {{
+    el.innerHTML = `<div style="color:#ef4444;padding:20px">Failed to load players</div>`; return;
+  }}
+
+  el.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:16px;max-width:860px">
+
+      <!-- ADD MATCH -->
+      <div class="host-section">
+        <div class="host-section-title">➕ ADD MATCH MANUALLY</div>
+        <div id="adminAddRows"></div>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <button class="btn btn-ghost" onclick="adminAddRow()">+ Add Player</button>
+          <select class="form-select" id="adminAddVictory" style="max-width:180px;margin-bottom:0">
+            <option value="">— Victory Type —</option>
+            <option value="Domination">⚔️ Domination</option>
+            <option value="Science">🚀 Science</option>
+            <option value="Culture">🎭 Culture</option>
+            <option value="Diplomatic">🕊️ Diplomatic</option>
+          </select>
+          <select class="form-select" id="adminAddDiff" style="max-width:140px;margin-bottom:0">
+            <option value="Prince">Prince</option>
+            <option value="King">King</option>
+          </select>
+          <select class="form-select" id="adminAddMap" style="max-width:140px;margin-bottom:0">
+            <option value="any">Any map</option>
+            <option value="land">Land</option>
+            <option value="coastal">Coastal</option>
+          </select>
+          <input class="form-input" id="adminAddDate" type="date" style="max-width:160px;margin-bottom:0" title="Date played">
+        </div>
+        <button class="btn btn-primary" style="margin-top:10px" onclick="adminSubmitAdd()">✅ Submit Match</button>
+      </div>
+
+      <!-- EDIT / DELETE HISTORY -->
+      <div class="host-section">
+        <div class="host-section-title">✏️ EDIT / DELETE EXISTING MATCHES</div>
+        <div id="adminHistList"></div>
+      </div>
+
+    </div>`;
+
+  // Seed today's date
+  document.getElementById("adminAddDate").value = new Date().toISOString().slice(0,10);
+
+  // Start with 2 player rows
+  adminAddRow(); adminAddRow();
+
+  // Build editable history list
+  buildAdminHistory();
+}}
+
+let _adminRowCount = 0;
+function adminAddRow() {{
+  _adminRowCount++;
+  const idx = _adminRowCount;
+  const opts = _adminPlayers.map(p => `<option value="${{p.id}}">${{p.name}} (${{p.elo}} Elo)</option>`).join("");
+  const civOpts = ALL_CIVS.map(c => `<option value="${{c}}">${{c}}</option>`).join("");
+  const row = document.createElement("div");
+  row.id = "adminRow-"+idx;
+  row.style.cssText = "display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap";
+  row.innerHTML = `
+    <span style="font-size:11px;color:#475569;width:20px;text-align:right">#${{idx}}</span>
+    <select class="form-select" id="adminRowPlayer-${{idx}}" style="flex:1;min-width:160px;margin-bottom:0">
+      <option value="">— Player —</option>
+      ${{opts}}
+    </select>
+    <select class="form-select" id="adminRowCiv-${{idx}}" style="flex:1;min-width:140px;margin-bottom:0">
+      <option value="">— Civ (optional) —</option>
+      ${{civOpts}}
+    </select>
+    <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="document.getElementById('adminRow-${{idx}}').remove()">✕</button>`;
+  document.getElementById("adminAddRows").appendChild(row);
+}}
+
+async function adminSubmitAdd() {{
+  const rows = document.querySelectorAll("[id^='adminRow-']");
+  const players = [];
+  let finish = 1;
+  for (const row of rows) {{
+    const idx = row.id.split("-")[1];
+    const pid = document.getElementById("adminRowPlayer-"+idx)?.value;
+    const civ = document.getElementById("adminRowCiv-"+idx)?.value || null;
+    if (!pid) {{ alert("Select a player for every row."); return; }}
+    if (players.find(p => p.id === pid)) {{ alert("Duplicate player: " + pid); return; }}
+    players.push({{id: pid, civ, finish: finish++}});
+  }}
+  if (players.length < 2) {{ alert("Need at least 2 players."); return; }}
+  const victory_type = document.getElementById("adminAddVictory").value || null;
+  const difficulty   = document.getElementById("adminAddDiff").value;
+  const map_type     = document.getElementById("adminAddMap").value;
+  const dateVal      = document.getElementById("adminAddDate").value;
+  const played_at    = dateVal ? dateVal + "T12:00:00" : null;
+
+  const res = await fetch("/api/admin/add_match", {{
+    method:"POST", headers:{{"Content-Type":"application/json"}},
+    body: JSON.stringify({{guild, players, victory_type, difficulty, map_type, played_at}})
+  }});
+  if (res.ok) {{
+    alert("✅ Match added!");
+    _adminRowCount = 0;
+    document.getElementById("adminAddRows").innerHTML = "";
+    adminAddRow(); adminAddRow();
+    buildAdminHistory();
+    await refreshPage();
+  }} else {{
+    const t = await res.text(); alert("Error: " + t);
+  }}
+}}
+
+function buildAdminHistory() {{
+  const el = document.getElementById("adminHistList");
+  if (!el) return;
+  // Use the global HISTORY array (already refreshed by buildAdminPage)
+  if (!HISTORY.length) {{ el.innerHTML = `<div style="color:#475569;font-size:11px">No matches yet.</div>`; return; }}
+  el.innerHTML = HISTORY.map((m, i) => {{
+    const winner = m.players[0];
+    const badge  = m.admin_added ? ` <span style="font-size:8px;color:#f97316;border:1px solid #f9731644;border-radius:4px;padding:1px 5px">ADMIN</span>` : "";
+    return `
+      <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #1e2130;flex-wrap:wrap">
+        <span style="font-size:10px;color:#475569;width:40px;flex-shrink:0">${{m.label}}</span>
+        <span style="font-size:10px;color:#94a3b8;flex:1;min-width:120px">
+          ${{m.date}} · 🥇 ${{winner?.name||"?"}} (${{winner?.civ||"?"}})${{badge}}
+        </span>
+        <span style="font-size:10px;color:#64748b">${{m.difficulty}} · ${{m.victory_type||"—"}}</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-ghost" style="padding:3px 10px;font-size:10px" onclick="adminOpenEdit(${{i}})">✏️ Edit</button>
+          <button class="btn btn-ghost" style="padding:3px 10px;font-size:10px;color:#ef4444;border-color:#ef444444" onclick="adminDeleteMatch(${{i}}, '${{m.label}}')">🗑 Delete</button>
+        </div>
+      </div>`;
+  }}).join("");
+}}
+
+let _adminEditIdx = null;
+function adminOpenEdit(histIdx) {{
+  _adminEditIdx = histIdx;
+  const m = HISTORY[histIdx];
+  const mc = document.getElementById("modalContainer");
+  const civOpts = civ => ALL_CIVS.map(c => `<option value="${{c}}"${{c===civ?" selected":""}}>${{c}}</option>`).join("");
+  const playerOpts = (selId) => _adminPlayers.map(p => `<option value="${{p.id}}"${{p.id===selId?" selected":""}}>${{p.name}}</option>`).join("");
+
+  const rows = m.players.map((mp, i) => `
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap">
+      <span style="font-size:11px;color:#475569;width:20px;text-align:right">#${{mp.finish}}</span>
+      <select class="form-select" id="editRowPlayer-${{i}}" style="flex:1;min-width:160px;margin-bottom:0">
+        ${{playerOpts(mp.id)}}
+      </select>
+      <select class="form-select" id="editRowCiv-${{i}}" style="flex:1;min-width:140px;margin-bottom:0">
+        <option value="">— Civ —</option>
+        ${{civOpts(mp.civ)}}
+      </select>
+    </div>`).join("");
+
+  mc.innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="max-width:560px;width:100%">
+        <div class="modal-title">✏️ Edit ${{m.label}}</div>
+        <div class="host-section-title" style="margin-bottom:8px">FINISHING ORDER (1st → last)</div>
+        <div id="editRows">${{rows}}</div>
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+          <select class="form-select" id="editVictory" style="flex:1;margin-bottom:0">
+            <option value="">— Victory Type —</option>
+            ${{["Domination","Science","Culture","Diplomatic"].map(v=>`<option value="${{v}}"${{v===m.victory_type?" selected":""}}>${{v}}</option>`).join("")}}
+          </select>
+          <select class="form-select" id="editDiff" style="flex:1;margin-bottom:0">
+            ${{["Prince","King"].map(d=>`<option value="${{d}}"${{d===m.difficulty?" selected":""}}>${{d}}</option>`).join("")}}
+          </select>
+          <select class="form-select" id="editMap" style="flex:1;margin-bottom:0">
+            ${{["any","land","coastal"].map(t=>`<option value="${{t}}"${{t===m.map_type?" selected":""}}>${{t}}</option>`).join("")}}
+          </select>
+          <input class="form-input" id="editDate" type="date" style="flex:1;margin-bottom:0" value="${{m.date}}">
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
+          <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+          <button class="btn btn-primary" onclick="adminSubmitEdit(${{m.players.length}})">Save Changes</button>
+        </div>
+      </div>
+    </div>`;
+}}
+
+async function adminSubmitEdit(count) {{
+  const players = [];
+  for (let i = 0; i < count; i++) {{
+    const pid = document.getElementById("editRowPlayer-"+i)?.value;
+    const civ = document.getElementById("editRowCiv-"+i)?.value || null;
+    if (!pid) {{ alert("Select a player for every row."); return; }}
+    players.push({{id: pid, civ, finish: i+1}});
+  }}
+  const victory_type = document.getElementById("editVictory").value || null;
+  const difficulty   = document.getElementById("editDiff").value;
+  const map_type     = document.getElementById("editMap").value;
+  const dateVal      = document.getElementById("editDate").value;
+  const played_at    = dateVal ? dateVal + "T12:00:00" : null;
+
+  const res = await fetch("/api/admin/edit_match", {{
+    method:"POST", headers:{{"Content-Type":"application/json"}},
+    body: JSON.stringify({{guild, match_idx: _adminEditIdx, players, victory_type, difficulty, map_type, played_at}})
+  }});
+  if (res.ok) {{
+    closeModal();
+    await refreshPage();
+    buildAdminHistory();
+  }} else {{
+    const t = await res.text(); alert("Error: " + t);
+  }}
+}}
+
+async function adminDeleteMatch(histIdx, label) {{
+  if (!confirm(`Delete ${{label}}? This will undo all Elo changes from that game.`)) return;
+  const res = await fetch("/api/admin/delete_match", {{
+    method:"POST", headers:{{"Content-Type":"application/json"}},
+    body: JSON.stringify({{guild, match_idx: histIdx}})
+  }});
+  if (res.ok) {{
+    await refreshPage();
+    buildAdminHistory();
+  }} else {{
+    const t = await res.text(); alert("Error: " + t);
+  }}
+}}
 </script>
-</body>
-</html>"""
 
 
 async def handle_graph(request):
@@ -2895,6 +3137,199 @@ async def handle_api_lobby_leave(request):
     save_all_data(all_data)
     return web.Response(text="OK")
 
+async def handle_api_admin_add_match(request):
+    """Admin: manually add a match result and recalculate Elo."""
+    session_token = request.cookies.get("session")
+    if not session_token: return web.Response(text="Not logged in", status=401)
+    user_id, _ = verify_session_token(session_token)
+    if user_id != ADMIN_DISCORD_ID: return web.Response(text="Forbidden", status=403)
+
+    body = await request.json()
+    guild_id   = body.get("guild", "")
+    # players_data: list of {id, civ, finish} in any order
+    players_data   = body.get("players", [])
+    victory_type   = body.get("victory_type") or None
+    difficulty     = body.get("difficulty", "Prince")
+    map_type       = body.get("map_type", "any")
+    played_at      = body.get("played_at") or datetime.utcnow().isoformat()
+
+    if len(players_data) < 2:
+        return web.Response(text="Need at least 2 players", status=400)
+
+    # Sort by finish position
+    players_data = sorted(players_data, key=lambda x: x.get("finish", 99))
+    finishes = [p.get("finish") for p in players_data]
+    if sorted(finishes) != list(range(1, len(players_data)+1)):
+        return web.Response(text="finish positions must be 1..N with no duplicates", status=400)
+
+    all_data = load_all_data()
+    data = get_server_data(all_data, guild_id)
+
+    elo_inputs = []
+    for entry in players_data:
+        pid = entry.get("id","")
+        p = get_player(data, pid)
+        elo_inputs.append({"id": pid, "finish": entry["finish"], "elo": p["elo"], "old_elo": p["elo"], "civ": entry.get("civ") or None})
+
+    new_elos = calc_multiplayer_elo(elo_inputs)
+
+    match_players = []
+    for i, info in enumerate(elo_inputs):
+        p = get_player(data, info["id"])
+        old_elo, new_elo = info["old_elo"], new_elos[i]
+        p["elo"] = new_elo
+        if i == 0: p["wins"] += 1
+        else:      p["losses"] += 1
+        civ = info["civ"]
+        if civ:
+            p["civs"].setdefault(civ, {"wins":0,"losses":0})
+            if i == 0: p["civs"][civ]["wins"] += 1
+            else:      p["civs"][civ]["losses"] += 1
+        match_players.append({"id": info["id"], "finish": info["finish"], "civ": civ,
+                               "elo_before": old_elo, "elo_after": new_elo})
+
+    data["matches"].append({
+        "type": f"{len(elo_inputs)}-player",
+        "difficulty": difficulty, "map_type": map_type,
+        "victory_type": victory_type, "draft_pools": {},
+        "players": match_players,
+        "played_at": played_at,
+        "admin_added": True,
+    })
+    save_all_data(all_data)
+    return web.Response(text="OK")
+
+
+async def handle_api_admin_edit_match(request):
+    """Admin: edit an existing match by index — recalculates Elo deltas."""
+    session_token = request.cookies.get("session")
+    if not session_token: return web.Response(text="Not logged in", status=401)
+    user_id, _ = verify_session_token(session_token)
+    if user_id != ADMIN_DISCORD_ID: return web.Response(text="Forbidden", status=403)
+
+    body = await request.json()
+    guild_id     = body.get("guild", "")
+    match_idx    = body.get("match_idx")
+    players_data = body.get("players", [])   # [{id, civ, finish}]
+    victory_type = body.get("victory_type") or None
+    difficulty   = body.get("difficulty", "Prince")
+    map_type     = body.get("map_type", "any")
+    played_at    = body.get("played_at") or None
+
+    all_data = load_all_data()
+    data = get_server_data(all_data, guild_id)
+    matches = data.get("matches", [])
+    # Filter to non-reset matches only (same indexing as the history list)
+    real_matches = [m for m in matches if m.get("type") != "reset"]
+    if match_idx is None or match_idx < 0 or match_idx >= len(real_matches):
+        return web.Response(text="Invalid match index", status=400)
+
+    old_match = real_matches[match_idx]
+
+    # --- Undo old match's Elo and stat changes ---
+    for mp in old_match.get("players", []):
+        pid = mp["id"]
+        p = data["players"].get(pid)
+        if not p: continue
+        p["elo"] = mp["elo_before"]
+        if mp.get("finish") == 1: p["wins"] = max(0, p["wins"] - 1)
+        else:                     p["losses"] = max(0, p["losses"] - 1)
+        civ = mp.get("civ")
+        if civ and civ in p.get("civs", {}):
+            if mp.get("finish") == 1: p["civs"][civ]["wins"]   = max(0, p["civs"][civ]["wins"]   - 1)
+            else:                     p["civs"][civ]["losses"]  = max(0, p["civs"][civ]["losses"] - 1)
+
+    # --- Apply new match ---
+    players_data = sorted(players_data, key=lambda x: x.get("finish", 99))
+    elo_inputs = []
+    for entry in players_data:
+        pid = entry.get("id","")
+        p = get_player(data, pid)
+        elo_inputs.append({"id": pid, "finish": entry["finish"], "elo": p["elo"], "old_elo": p["elo"], "civ": entry.get("civ") or None})
+
+    new_elos = calc_multiplayer_elo(elo_inputs)
+    match_players = []
+    for i, info in enumerate(elo_inputs):
+        p = get_player(data, info["id"])
+        p["elo"] = new_elos[i]
+        if i == 0: p["wins"] += 1
+        else:      p["losses"] += 1
+        civ = info["civ"]
+        if civ:
+            p["civs"].setdefault(civ, {"wins":0,"losses":0})
+            if i == 0: p["civs"][civ]["wins"] += 1
+            else:      p["civs"][civ]["losses"] += 1
+        match_players.append({"id": info["id"], "finish": info["finish"], "civ": civ,
+                               "elo_before": info["old_elo"], "elo_after": new_elos[i]})
+
+    new_match = {
+        "type": old_match.get("type", f"{len(elo_inputs)}-player"),
+        "difficulty": difficulty, "map_type": map_type,
+        "victory_type": victory_type, "draft_pools": old_match.get("draft_pools", {}),
+        "players": match_players,
+        "played_at": played_at or old_match.get("played_at", datetime.utcnow().isoformat()),
+        "admin_edited": True,
+    }
+
+    # Replace in the real matches list (find it in the full list by identity)
+    full_idx = matches.index(old_match)
+    matches[full_idx] = new_match
+    save_all_data(all_data)
+    return web.Response(text="OK")
+
+
+async def handle_api_admin_delete_match(request):
+    """Admin: delete a match by index and undo its Elo/stat changes."""
+    session_token = request.cookies.get("session")
+    if not session_token: return web.Response(text="Not logged in", status=401)
+    user_id, _ = verify_session_token(session_token)
+    if user_id != ADMIN_DISCORD_ID: return web.Response(text="Forbidden", status=403)
+
+    body = await request.json()
+    guild_id  = body.get("guild", "")
+    match_idx = body.get("match_idx")
+
+    all_data = load_all_data()
+    data = get_server_data(all_data, guild_id)
+    matches = data.get("matches", [])
+    real_matches = [m for m in matches if m.get("type") != "reset"]
+    if match_idx is None or match_idx < 0 or match_idx >= len(real_matches):
+        return web.Response(text="Invalid match index", status=400)
+
+    old_match = real_matches[match_idx]
+    for mp in old_match.get("players", []):
+        pid = mp["id"]
+        p = data["players"].get(pid)
+        if not p: continue
+        p["elo"] = mp["elo_before"]
+        if mp.get("finish") == 1: p["wins"] = max(0, p["wins"] - 1)
+        else:                     p["losses"] = max(0, p["losses"] - 1)
+        civ = mp.get("civ")
+        if civ and civ in p.get("civs", {}):
+            if mp.get("finish") == 1: p["civs"][civ]["wins"]   = max(0, p["civs"][civ]["wins"]   - 1)
+            else:                     p["civs"][civ]["losses"]  = max(0, p["civs"][civ]["losses"] - 1)
+
+    full_idx = matches.index(old_match)
+    matches.pop(full_idx)
+    save_all_data(all_data)
+    return web.Response(text="OK")
+
+
+async def handle_api_admin_players(request):
+    """Admin: return full player list for the guild (id + name)."""
+    session_token = request.cookies.get("session")
+    if not session_token: return web.Response(text="Not logged in", status=401)
+    user_id, _ = verify_session_token(session_token)
+    if user_id != ADMIN_DISCORD_ID: return web.Response(text="Forbidden", status=403)
+    guild_id = request.query.get("guild","")
+    all_data = load_all_data()
+    data = get_server_data(all_data, guild_id)
+    players = [{"id": pid, "name": p.get("name", pid), "elo": p.get("elo",1000)}
+               for pid, p in data["players"].items()]
+    players.sort(key=lambda x: x["elo"], reverse=True)
+    return web.Response(text=json.dumps(players), content_type="application/json")
+
+
 async def start_web_server():
     app = web.Application()
     app.router.add_get("/graph", handle_graph)
@@ -2911,6 +3346,10 @@ async def start_web_server():
     app.router.add_post("/api/game/pick", handle_api_game_pick)
     app.router.add_post("/api/game/cancel", handle_api_game_cancel)
     app.router.add_post("/api/game/report", handle_api_game_report)
+    app.router.add_get("/api/admin/players", handle_api_admin_players)
+    app.router.add_post("/api/admin/add_match", handle_api_admin_add_match)
+    app.router.add_post("/api/admin/edit_match", handle_api_admin_edit_match)
+    app.router.add_post("/api/admin/delete_match", handle_api_admin_delete_match)
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(os.getenv("PORT", 8080))
