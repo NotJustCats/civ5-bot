@@ -1848,13 +1848,47 @@ function currentTab() {{
   const active = document.querySelector(".tab.active");
   if (!active) return "stats";
   const idx = Array.from(document.querySelectorAll(".tab")).indexOf(active);
-  return ["stats","live","history","host"][idx] || "stats";
+  return ["stats","live","history","host","civpedia"][idx] || "stats";
 }}
 
-function refreshPage() {{
-  // Reload data without going back to stats
-  const tab = currentTab();
-  window.location.href = window.location.href.split("?")[0] + "?guild=" + guild + "&tab=" + tab;
+async function refreshPage() {{
+  // Soft refresh: fetch fresh data and re-render the current tab in-place
+  // so the page never bounces, scrolls, or resets your form position.
+  try {{
+    const resp = await fetch("/api/pagedata?guild=" + encodeURIComponent(guild));
+    if (!resp.ok) throw new Error("pagedata " + resp.status);
+    const d = await resp.json();
+
+    // Patch the mutable arrays/objects the render functions read from
+    TIMELINE.length = 0;   d.timeline.forEach(x   => TIMELINE.push(x));
+    PLAYERS.length  = 0;   d.players.forEach(x    => PLAYERS.push(x));
+    PIE_LABELS.length = 0; d.pie_labels.forEach(x => PIE_LABELS.push(x));
+    PIE_VALUES.length = 0; d.pie_values.forEach(x => PIE_VALUES.push(x));
+    HISTORY.length    = 0; d.history.forEach(x    => HISTORY.push(x));
+    LIVE_GAMES.length = 0; d.live_games.forEach(x => LIVE_GAMES.push(x));
+    Object.keys(LB_DATA).forEach(k     => delete LB_DATA[k]);     Object.assign(LB_DATA, d.lb_data);
+    Object.keys(MATCH_INDEX).forEach(k => delete MATCH_INDEX[k]); Object.assign(MATCH_INDEX, d.match_index);
+    Object.keys(PLAYER_PREFS).forEach(k=> delete PLAYER_PREFS[k]);Object.assign(PLAYER_PREFS, d.player_prefs);
+    Object.keys(CARD_TIERS).forEach(k  => delete CARD_TIERS[k]);  Object.assign(CARD_TIERS, d.card_tiers);
+    Object.keys(CIV_WINS).forEach(k    => delete CIV_WINS[k]);    Object.assign(CIV_WINS, d.civ_wins);
+
+    // Re-render only the tab the user is currently on
+    const tab = currentTab();
+    if (tab === "live")    {{ buildLiveGames(); }}
+    if (tab === "history") {{ buildHistory(); }}
+    if (tab === "host")    {{ buildHostPage(); }}
+    if (tab === "stats")   {{
+      buildPlayerCards();
+      buildLeaderboard();
+      rebuildEloChart();
+      rebuildPieChart();
+    }}
+  }} catch(e) {{
+    // Fallback: hard reload only if the soft refresh itself fails
+    console.warn("Soft refresh failed, falling back:", e);
+    const tab = currentTab();
+    window.location.href = window.location.href.split("?")[0] + "?guild=" + guild + "&tab=" + tab;
+  }}
 }}
 
 // Read tab from URL on load
@@ -2375,6 +2409,222 @@ async def handle_data(request):
     all_data = load_all_data()
     return web.Response(text=json.dumps(all_data), content_type="application/json")
 
+async def handle_api_pagedata(request):
+    """Return the same pre-processed page data that build_graph_html bakes in,
+    so the frontend can refresh in-place without a full page reload."""
+    guild_id = request.query.get("guild")
+    if not guild_id:
+        return web.Response(text=json.dumps({"error": "missing guild"}), content_type="application/json", status=400)
+    session_token = request.cookies.get("session")
+    logged_in_id = logged_in_name = None
+    if session_token:
+        logged_in_id, logged_in_name = verify_session_token(session_token)
+
+    all_data = load_all_data()
+    data = all_data.get(guild_id, {"players": {}, "matches": [], "active_games": {}, "game_groups": {}, "lobbies": {}})
+    matches = data.get("matches", [])
+    players = data.get("players", {})
+    active_games = data.get("active_games", {})
+    game_groups = data.get("game_groups", {})
+    lobbies = data.get("lobbies", {})
+
+    active_ids = set()
+    for m in matches:
+        for p in m.get("players", []):
+            active_ids.add(p["id"])
+
+    current_elo = {pid: 1000 for pid in active_ids}
+    timeline = [{"label": "Start", **{pid: 1000 for pid in active_ids}}]
+    sorted_matches = sorted(matches, key=lambda m: m.get("played_at", ""))
+    game_num = 0
+    match_index = {}
+    for i, match in enumerate(sorted_matches):
+        date_str = match.get("played_at", "")[:10]
+        if match.get("type") == "reset":
+            for pid in active_ids:
+                current_elo[pid] = 1000
+            timeline.append({"label": f"RESET ({date_str})", **{pid: current_elo[pid] for pid in active_ids}})
+            game_num = 0
+            continue
+        game_num += 1
+        for p in match.get("players", []):
+            if p["id"] in active_ids:
+                current_elo[p["id"]] = p["elo_after"]
+        label = f"G{game_num} ({date_str})"
+        timeline.append({"label": label, **{pid: current_elo[pid] for pid in active_ids}})
+        match_index[label] = i
+
+    player_list = [
+        {"id": pid, "name": players.get(pid, {}).get("name", f"Player {i+1}"), "finalElo": players.get(pid, {}).get("elo", 1000)}
+        for i, pid in enumerate(sorted(active_ids, key=lambda x: players.get(x, {}).get("elo", 0), reverse=True))
+    ]
+
+    civ_counts = {}
+    for m in sorted_matches:
+        if m.get("type") in ("reset", None): continue
+        for p in m.get("players", []):
+            civ = p.get("civ")
+            if civ: civ_counts[civ] = civ_counts.get(civ, 0) + 1
+    top_civs = sorted(civ_counts.items(), key=lambda x: x[1], reverse=True)[:12]
+    pie_labels = [c for c, _ in top_civs]
+    pie_values = [v for _, v in top_civs]
+
+    COASTAL_SET = {"Australia","Brunei","Carthage","Chile","Denmark","England",
+        "Indonesia","Japan","Kilwa","Korea","Netherlands","New Zealand",
+        "Norway","Oman","Philippines","Phoenicia","Polynesia","Portugal","Spain",
+        "Tonga","Tunisia","UAE","Venice"}
+    lb_data = {}
+    for pid in active_ids:
+        p = players.get(pid, {})
+        civs = p.get("civs", {})
+        def civ_wr(item):
+            v = item[1]; g = v["wins"] + v["losses"]
+            return v["wins"] / g if g > 0 else 0
+        top_p_civs = sorted(civs.items(), key=civ_wr, reverse=True)[:5]
+        coastal_games = land_games = 0
+        peak_elo = 1000
+        big_game_win = played_8 = False
+        unique_civs = set(); win_civs = set()
+        victory_counts = {"Domination": 0, "Science": 0, "Culture": 0, "Diplomatic": 0}
+        difficulty_wins = {"Prince": 0, "King": 0}
+        for m in sorted_matches:
+            if m.get("type") in ("reset", None): continue
+            game_players = m.get("players", [])
+            game_size = len(game_players)
+            winner_id = next((mp["id"] for mp in game_players if mp.get("finish") == 1), None)
+            if winner_id == pid:
+                vtype = m.get("victory_type")
+                diff = m.get("difficulty", "Prince")
+                if vtype in victory_counts: victory_counts[vtype] += 1
+                if diff in difficulty_wins: difficulty_wins[diff] += 1
+            for mp in game_players:
+                if mp["id"] == pid:
+                    civ_name = mp.get("civ"); finish = mp.get("finish", 99)
+                    elo_after = mp.get("elo_after", 1000)
+                    if civ_name:
+                        unique_civs.add(civ_name)
+                        if finish == 1: win_civs.add(civ_name)
+                        if civ_name in COASTAL_SET: coastal_games += 1
+                        else: land_games += 1
+                    if elo_after > peak_elo: peak_elo = elo_after
+                    if finish == 1 and game_size >= 6: big_game_win = True
+                    if game_size >= 8: played_8 = True
+        wins_n = p.get("wins", 0); losses_n = p.get("losses", 0); total_n = wins_n + losses_n
+        spider_wr = round(wins_n / total_n * 100) if total_n > 0 else 0
+        spider_variety = min(100, round(len(unique_civs) / 20 * 100))
+        map_total_n = coastal_games + land_games
+        spider_coastal = round(coastal_games / map_total_n * 100) if map_total_n > 0 else 0
+        bg_wins = bg_total = 0
+        for m in sorted_matches:
+            if m.get("type") in ("reset", None): continue
+            gps = m.get("players", [])
+            if len(gps) >= 4:
+                for mp in gps:
+                    if mp["id"] == pid:
+                        bg_total += 1
+                        if mp.get("finish") == 1: bg_wins += 1
+        spider_biggame = round(bg_wins / bg_total * 100) if bg_total > 0 else 0
+        elo_changes = []
+        for m in sorted_matches:
+            if m.get("type") in ("reset", None): continue
+            for mp in m.get("players", []):
+                if mp["id"] == pid:
+                    elo_changes.append(mp.get("elo_after", 1000) - mp.get("elo_before", 1000))
+        avg_elo_change = sum(elo_changes) / len(elo_changes) if elo_changes else 0
+        spider_growth = max(0, min(100, round(avg_elo_change * 4 + 50)))
+        lb_data[pid] = {
+            "wins": p.get("wins", 0), "losses": p.get("losses", 0),
+            "top_civs": [{"civ": c, "wins": v["wins"], "losses": v["losses"]} for c, v in top_p_civs],
+            "coastal_games": coastal_games, "land_games": land_games,
+            "unique_civs": len(unique_civs), "win_civs": len(win_civs),
+            "peak_elo": peak_elo, "big_game_win": big_game_win, "played_8": played_8,
+            "victory_counts": victory_counts, "difficulty_wins": difficulty_wins,
+            "spider": {"win_rate": spider_wr, "civ_variety": spider_variety, "coastal_mastery": spider_coastal, "big_game": spider_biggame, "elo_growth": spider_growth},
+        }
+
+    history = []
+    for i, m in enumerate(reversed(sorted_matches)):
+        if m.get("type") == "reset": continue
+        orig_idx = len(sorted_matches) - 1 - list(reversed(sorted_matches)).index(m)
+        game_ps = m.get("players", [])
+        winner = next((mp for mp in game_ps if mp.get("finish") == 1), None)
+        winner_name = players.get(winner["id"], {}).get("name", "?") if winner else "?"
+        winner_civ = winner.get("civ", "?") if winner else "?"
+        draft_pools = m.get("draft_pools", {})
+        history.append({
+            "idx": orig_idx,
+            "label": f"G{len(sorted_matches) - list(reversed(sorted_matches)).index(m)}",
+            "date": m.get("played_at", "")[:10],
+            "type": m.get("type", "?"),
+            "difficulty": m.get("difficulty", "Prince"),
+            "map_type": m.get("map_type", "any"),
+            "victory_type": m.get("victory_type", None),
+            "winner_name": winner_name,
+            "winner_civ": winner_civ,
+            "draft_pools": draft_pools,
+            "players": [{"id": mp.get("id",""), "name": players.get(mp["id"], {}).get("name", "?"), "civ": mp.get("civ","?"), "finish": mp.get("finish",0), "elo_before": mp.get("elo_before",1000), "elo_after": mp.get("elo_after",1000)} for mp in sorted(game_ps, key=lambda x: x.get("finish",99))],
+        })
+
+    live_games = []
+    for game_id, group in game_groups.items():
+        host_name = players.get(game_id, {}).get("name", group.get("player_names", ["?"])[0])
+        picks = group.get("picks", {})
+        draft = group.get("draft", {})
+        ps = []
+        for pid, name in zip(group.get("players", []), group.get("player_names", [])):
+            chosen = picks.get(pid)
+            pool = draft.get(pid, []) if draft else []
+            ps.append({"id": pid, "name": name, "chosen": chosen, "pool": pool})
+        live_games.append({
+            "host": host_name, "host_id": game_id,
+            "difficulty": group.get("difficulty", "Prince"),
+            "map_type": group.get("map_type", "any"),
+            "players": ps,
+        })
+    for host_id, lobby in lobbies.items():
+        lobby_player_ids = lobby.get("players", [])
+        lobby_player_names = lobby.get("player_names", [])
+        live_games.append({
+            "host": lobby.get("host_name", "?"), "host_id": host_id,
+            "difficulty": lobby.get("difficulty", "Prince"),
+            "status": "lobby",
+            "players": [{"id": pid, "name": name, "chosen": None, "pool": []} for pid, name in zip(lobby_player_ids, lobby_player_names)],
+        })
+
+    prefs = players.get(logged_in_id or "", {}).get("prefs", {}) if logged_in_id else {}
+    my_civ_wins = {}
+    for pid, p in players.items():
+        if pid == (logged_in_id or ""):
+            for civ_name, civ_stats in p.get("civs", {}).items():
+                my_civ_wins[civ_name] = civ_stats.get("wins", 0)
+
+    def wins_to_tier(w):
+        if w >= 4: return "diamond"
+        if w >= 3: return "gold"
+        if w >= 2: return "silver"
+        if w >= 1: return "bronze"
+        return "normal"
+
+    result = {
+        "timeline": timeline,
+        "players": player_list,
+        "pie_labels": pie_labels,
+        "pie_values": pie_values,
+        "lb_data": lb_data,
+        "history": history,
+        "live_games": live_games,
+        "match_index": match_index,
+        "logged_in_id": logged_in_id or "",
+        "logged_in_name": logged_in_name or "",
+        "display_name": prefs.get("display_name", logged_in_name or ""),
+        "fav_civ": prefs.get("fav_civ", ""),
+        "guild_id": guild_id,
+        "player_prefs": {pid: p.get("prefs", {}) for pid, p in players.items()},
+        "civ_wins": my_civ_wins,
+        "card_tiers": {civ: wins_to_tier(w) for civ, w in my_civ_wins.items()},
+    }
+    return web.Response(text=json.dumps(result), content_type="application/json")
+
 async def handle_api_prefs(request):
     """Save display name and favourite civ for logged-in user."""
     session_token = request.cookies.get("session")
@@ -2652,6 +2902,7 @@ async def start_web_server():
     app.router.add_get("/callback", handle_callback)
     app.router.add_get("/logout", handle_logout)
     app.router.add_get("/data", handle_data)
+    app.router.add_get("/api/pagedata", handle_api_pagedata)
     app.router.add_post("/api/prefs", handle_api_prefs)
     app.router.add_post("/api/lobby/create", handle_api_lobby_create)
     app.router.add_post("/api/lobby/join", handle_api_lobby_join)
